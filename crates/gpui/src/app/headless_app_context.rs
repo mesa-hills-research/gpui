@@ -161,6 +161,30 @@ impl HeadlessAppContext {
         app.update_window(window, f)
     }
 
+    /// Simulates the window moving to a display with a different scale factor, as
+    /// `TestAppContext::simulate_window_scale_factor_change` does. Headless windows open at
+    /// scale factor 2.
+    pub fn simulate_window_scale_factor_change(
+        &mut self,
+        window: AnyWindowHandle,
+        scale_factor: f32,
+    ) -> Result<()> {
+        let test_window = {
+            let mut app = self.app.borrow_mut();
+            app.windows
+                .get_mut(window.window_id())
+                .and_then(|window| window.as_mut())
+                .and_then(|window| window.platform_window.as_test())
+                .cloned()
+        };
+        // The resize callback borrows the app again, so the borrow above has to end first.
+        let mut test_window =
+            test_window.ok_or_else(|| anyhow::anyhow!("window {window:?} is not open"))?;
+        test_window.simulate_scale_factor_change(scale_factor);
+        self.run_until_parked();
+        Ok(())
+    }
+
     /// Captures a screenshot from a window.
     ///
     /// Requires that the context was created with a renderer factory that

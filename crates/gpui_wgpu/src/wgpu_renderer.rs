@@ -2320,6 +2320,23 @@ pub struct WgpuHeadlessRenderer {
 impl WgpuHeadlessRenderer {
     pub fn new() -> anyhow::Result<Self> {
         let (context, target_format) = WgpuContext::new_headless()?;
+        Ok(Self::with_context(context, target_format))
+    }
+
+    /// A renderer on a software (CPU) adapter, such as Mesa's lavapipe, even when the machine
+    /// has a GPU. Screenshot tests use it so that their images depend on the driver version
+    /// rather than on the GPU.
+    pub fn new_software() -> anyhow::Result<Self> {
+        let (context, target_format) = WgpuContext::new_headless_software()?;
+        Ok(Self::with_context(context, target_format))
+    }
+
+    /// The adapter this renderer draws with.
+    pub fn adapter_info(&self) -> wgpu::AdapterInfo {
+        self.context.adapter.get_info()
+    }
+
+    fn with_context(context: WgpuContext, target_format: wgpu::TextureFormat) -> Self {
         // The device may be shared with earlier renderers; observe only errors raised from
         // here on, including any while this renderer builds its pipelines.
         let observed_error_generation = context.errors().current_generation();
@@ -2331,12 +2348,12 @@ impl WgpuHeadlessRenderer {
             wgpu::CompositeAlphaMode::Opaque,
         );
 
-        Ok(Self {
+        Self {
             context,
             core,
             render_target: None,
             observed_error_generation,
-        })
+        }
     }
 
     fn ensure_render_target(&mut self, size: Size<DevicePixels>) -> anyhow::Result<()> {

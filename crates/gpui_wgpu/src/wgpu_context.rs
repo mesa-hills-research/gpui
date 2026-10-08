@@ -186,13 +186,37 @@ impl WgpuContext {
         // because wgpu's queue reads its own thread-locals on drop and would panic if
         // dropped while a thread's thread-locals are being destroyed.
         static HEADLESS: Mutex<Option<(WgpuContext, wgpu::TextureFormat)>> = Mutex::new(None);
-        let mut headless = HEADLESS.lock();
+        Self::shared_headless(&HEADLESS, false)
+    }
+
+    /// Like [`Self::new_headless`], restricted to software (CPU) adapters such as Mesa's
+    /// lavapipe. Their output depends on the driver version rather than on the machine's GPU,
+    /// which is what screenshot tests compare against.
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    pub(crate) fn new_headless_software() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
+        static HEADLESS_SOFTWARE: Mutex<Option<(WgpuContext, wgpu::TextureFormat)>> =
+            Mutex::new(None);
+        Self::shared_headless(&HEADLESS_SOFTWARE, true)
+    }
+
+    #[cfg(all(
+        not(target_family = "wasm"),
+        any(test, feature = "bench-support", feature = "test-support")
+    ))]
+    fn shared_headless(
+        cache: &Mutex<Option<(WgpuContext, wgpu::TextureFormat)>>,
+        software_only: bool,
+    ) -> anyhow::Result<(Self, wgpu::TextureFormat)> {
+        let mut headless = cache.lock();
         if let Some((context, format)) = headless.as_ref()
             && !context.device_lost()
         {
             return Ok((context.clone(), *format));
         }
-        let created = Self::create_headless()?;
+        let created = Self::create_headless(software_only)?;
         *headless = Some(created.clone());
         Ok(created)
     }
@@ -201,12 +225,16 @@ impl WgpuContext {
         not(target_family = "wasm"),
         any(test, feature = "bench-support", feature = "test-support")
     ))]
-    fn create_headless() -> anyhow::Result<(Self, wgpu::TextureFormat)> {
+    fn create_headless(software_only: bool) -> anyhow::Result<(Self, wgpu::TextureFormat)> {
         let instance = Self::instance(None);
         let device_id_filter = Self::device_id_filter();
         let (adapter, device, queue, dual_source_blending, color_texture_format, target_format) =
             gpui::block_on(async {
                 let mut adapters = instance.enumerate_adapters(wgpu::Backends::all()).await;
+                if software_only {
+                    adapters
+                        .retain(|adapter| adapter.get_info().device_type == wgpu::DeviceType::Cpu);
+                }
                 Self::sort_adapters(&mut adapters, device_id_filter, None);
 
                 for adapter in adapters {
@@ -247,6 +275,13 @@ impl WgpuContext {
                     }
                 }
 
+                if software_only {
+                    anyhow::bail!(
+                        "No usable software (CPU) adapter found for headless rendering. \
+                         On Linux, Mesa's lavapipe provides one (package mesa-vulkan-drivers \
+                         on Debian and Ubuntu)."
+                    )
+                }
                 anyhow::bail!("No usable headless GPU adapter found")
             })?;
 
