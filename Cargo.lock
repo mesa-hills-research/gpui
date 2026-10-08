@@ -2700,6 +2700,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-pre-screenshot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "gpui-pre",
+ "gpui-pre-wgpu",
+ "image",
+ "png 0.18.0",
+ "sha2",
+]
+
+[[package]]
 name = "gpui-pre-shared-string"
 version = "0.3.8"
 dependencies = [

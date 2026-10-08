@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Write back the images a screenshot test run printed with PRINT_SCREENSHOTS=1.
+#
+#   script/screenshots-from-log [-C DIR] [LOG]
+#
+# Reads the run's standard output from LOG, or from standard input, and writes
+# the image of each `GPUI-SCREENSHOT <sha256> <path> <base64>` line to
+# DIR/<path>. The paths are relative to the root of the workspace the tests
+# ran in (the folder with its Cargo.lock), so DIR is the local checkout of that
+# workspace, by default the current folder. Each file is checked against its
+# SHA-256 before it replaces anything.
+set -euo pipefail
+
+dir=.
+if [ "${1:-}" = "-C" ]; then
+  dir=$2
+  shift 2
+fi
+log=${1:-/dev/stdin}
+
+count=0
+while read -r _ digest path data; do
+  case "/$path/" in
+    //* | */../*)
+      echo "screenshots-from-log: skipping $path, which is outside the workspace" >&2
+      continue
+      ;;
+  esac
+  target="$dir/$path"
+  mkdir -p "$(dirname "$target")"
+  printf %s "$data" | base64 -d > "$target.part"
+  if ! echo "$digest  $target.part" | sha256sum --check --status; then
+    rm -f "$target.part"
+    echo "screenshots-from-log: $path is damaged in the log, its checksum differs" >&2
+    exit 1
+  fi
+  mv "$target.part" "$target"
+  # A failures folder ignores itself, as the harness sets it up.
+  case "$path" in
+    */failures/*) [ -e "${target%%/failures/*}/failures/.gitignore" ] \
+      || printf '*\n' > "${target%%/failures/*}/failures/.gitignore" ;;
+  esac
+  echo "wrote $path"
+  count=$((count + 1))
+done < <(grep -a '^GPUI-SCREENSHOT ' "$log" || true)
+echo "$count files"

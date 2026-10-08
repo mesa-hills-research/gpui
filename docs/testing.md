@@ -4,6 +4,8 @@
 
 - `cargo check --workspace` covers every library.
 - `cargo test -p gpui-pre-mobile` runs the mobile crate's unit tests.
+- `cargo test -p gpui-pre-screenshot` runs the screenshot harness's tests and its goldens of
+  plain GPUI elements, on Linux.
 - mhr_gpui_kit's suite, about 2,650 tests, exercises the gpui crates through GPUI Kit. Run it from
   an mhr_gpui_kit checkout whose `[patch.crates-io]` points at this one.
 
@@ -41,3 +43,7 @@ the Vulkan renderer unaffected.
 This reaches further than desktop: Android draws through the same wgpu renderer core and the
 same cosmic-text system, so screenshot tests on Linux cover Android's rendering and text. They
 leave out its platform code: touch, IME, surfaces and the lifecycle.
+
+`gpui-pre-screenshot` builds golden-image tests on this, with bundled fonts and the software
+adapter even where a GPU is present. [screenshots.md](screenshots.md) covers writing the tests and
+updating their goldens.
