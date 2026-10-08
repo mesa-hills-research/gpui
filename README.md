@@ -13,8 +13,9 @@ Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
 
 | Crates | Source | State |
 |---|---|---|
-| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged: repackaging them gives the crates.io files byte for byte |
+| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged apart from two test-support additions to `gpui-pre` and `gpui-pre-wgpu` for screenshot tests. Repackaging the other 23 gives the crates.io files byte for byte |
 | `gpui-pre-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental, see [Mobile](#mobile) |
+| `gpui-pre-screenshot` (`crates/gpui_screenshot`) | This fork | Golden-image tests for GPUI views, see [Screenshot tests](#screenshot-tests) |
 
 `script/verify-upstream.sh` repeats the byte-for-byte check against crates.io.
 
@@ -55,6 +56,24 @@ workspace, so it always builds against the gpui beside it.
 
 [docs/mobile.md](docs/mobile.md) covers building, the gaps and the open upstream work.
 [docs/testing.md](docs/testing.md) covers tests, including headless screenshots on Linux.
+
+## Screenshot tests
+
+`gpui-pre-screenshot` renders GPUI views headlessly on Linux, on Mesa's software Vulkan driver
+with bundled fonts, and compares them with golden PNGs. Android draws through the same renderer
+and text system, so the goldens cover its rendering and text too. GPUI Kit's buttons, inputs,
+list and menu have goldens in mhr_gpui_kit.
+
+```rust
+let mut app = gpui_screenshot::ScreenshotApp::new()?;
+let shot = app.render_view(size(px(120.), px(40.)), 2.625, |_, cx| cx.new(|_| Badge))?;
+gpui_screenshot::goldens!().assert("badge", &shot); // tests/screenshots/badge.png
+```
+
+On the build box all 14 goldens matched exactly in each of four runs, three with parallel test
+threads and one with a single thread. `UPDATE_GOLDENS=1 cargo test` rewrites goldens after an
+intended change. [docs/screenshots.md](docs/screenshots.md) covers writing the tests, reviewing failures, running
+them on a remote machine and why the pixels repeat exactly.
 
 ## License
 
