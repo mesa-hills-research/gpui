@@ -1,0 +1,24 @@
+[package]
+name = "gpui-pre-screenshot"
+version = "0.1.0"
+edition = { workspace = true }
+publish = false
+license = "Apache-2.0"
+description = "Golden-image screenshot tests for GPUI views, rendered headlessly on Linux"
+
+[lib]
+path = "src/gpui_screenshot.rs"
+name = "gpui_screenshot"
+doctest = false
+
+[dependencies]
+anyhow = { workspace = true }
+base64 = { workspace = true }
+gpui = { workspace = true, features = ["test-support"] }
+gpui_wgpu = { workspace = true, features = ["test-support"] }
+image = { workspace = true }
+png = "0.18"
+sha2 = { workspace = true }
+
+[lints]
+workspace = true
