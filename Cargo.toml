@@ -26,6 +26,7 @@ members = [
     "crates/gpui_platform",
     "crates/http_client_tls",
     "crates/reqwest_client",
+    "crates/gpui_mobile",
 ]
 
 [workspace.package]

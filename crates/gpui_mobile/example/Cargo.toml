@@ -1,0 +1,74 @@
+[package]
+name = "gpui-mobile-example"
+version = "0.1.0"
+edition = "2021"
+description = "Cross-platform GPUI example app for Android and iOS"
+publish = false
+
+# A workspace of its own, so it keeps its own profiles and [patch], and the
+# workspace's `cargo test` stays off the full GPUI Kit build.
+[workspace]
+
+[lib]
+name = "gpui_mobile_example"
+crate-type = ["cdylib", "staticlib", "lib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "gpui-example"
+path = "src/main.rs"
+
+[dependencies]
+# GPUI Kit 0.7.1 is built against gpui-pre 0.3.8, the snapshot in this
+# workspace. The [patch] below points it at the workspace's gpui crates.
+gpui-kit = { version = "=0.7.1", default-features = false, features = ["component"] }
+gpui-mobile = { package = "gpui-pre-mobile", path = "..", version = "0.1.0" }
+gpui = { package = "gpui-pre", version = "=0.3.8", default-features = false }
+reqwest_client = { package = "gpui-pre-reqwest-client", version = "=0.3.8" }
+reqwest = { package = "gpui-pre-reqwest", version = "0.12.15", default-features = false, features = ["rustls-tls"] }
+log = "0.4"
+
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.6"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android_logger = "0.15"
+android-activity = { version = "0.6", features = ["native-activity"] }
+
+# The gpui crates of this workspace, in place of the crates.io snapshot.
+[patch.crates-io]
+gpui-pre                   = { path = "../../gpui" }
+gpui-pre-apple             = { path = "../../gpui_apple" }
+gpui-pre-collections       = { path = "../../collections" }
+gpui-pre-derive-refineable = { path = "../../refineable/derive_refineable" }
+gpui-pre-http-client       = { path = "../../http_client" }
+gpui-pre-http-client-tls   = { path = "../../http_client_tls" }
+gpui-pre-linux             = { path = "../../gpui_linux" }
+gpui-pre-macos             = { path = "../../gpui_macos" }
+gpui-pre-macros            = { path = "../../gpui_macros" }
+gpui-pre-perf              = { path = "../../../tooling/perf" }
+gpui-pre-platform          = { path = "../../gpui_platform" }
+gpui-pre-refineable        = { path = "../../refineable" }
+gpui-pre-reqwest-client    = { path = "../../reqwest_client" }
+gpui-pre-scheduler         = { path = "../../scheduler" }
+gpui-pre-shared-string     = { path = "../../gpui_shared_string" }
+gpui-pre-sum-tree          = { path = "../../sum_tree" }
+gpui-pre-util              = { path = "../../gpui_util" }
+gpui-pre-util-macros       = { path = "../../util_macros" }
+gpui-pre-web               = { path = "../../gpui_web" }
+gpui-pre-wgpu              = { path = "../../gpui_wgpu" }
+gpui-pre-windows           = { path = "../../gpui_windows" }
+gpui-pre-zlog              = { path = "../../zlog" }
+gpui-pre-ztracing          = { path = "../../ztracing" }
+gpui-pre-ztracing-macro    = { path = "../../ztracing_macro" }
+
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
