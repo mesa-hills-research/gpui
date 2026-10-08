@@ -83,8 +83,8 @@ message prints next to the current run's.
 
 ## On a remote build machine
 
-When the tests run on a machine whose files don't come back, such as the build box behind
-`box-cargo`, `PRINT_SCREENSHOTS=1` also prints every image the harness writes, goldens and
+When the tests run on a machine whose files don't come back, such as a CI runner or a remote
+build machine, `PRINT_SCREENSHOTS=1` also prints every image the harness writes, goldens and
 failures alike, as one line on standard output:
 
 ```text
@@ -97,9 +97,10 @@ against its hash. Cargo's `--config 'env.NAME="value"'` sets the variables for t
 works wherever cargo's arguments get through:
 
 ```sh
-box-cargo -C ~/Desktop/gpui-work/screenshots -- test \
-  --manifest-path mhr_gpui_kit/Cargo.toml -p gpui-kit --features test-support --test screenshots \
-  --config 'env.UPDATE_GOLDENS="1"' --config 'env.PRINT_SCREENSHOTS="1"' > run.log
+# On the remote machine, in an mhr_gpui_kit checkout, with standard output saved as run.log
+cargo test -p gpui-kit --features test-support --test screenshots \
+  --config 'env.UPDATE_GOLDENS="1"' --config 'env.PRINT_SCREENSHOTS="1"'
+# Locally, in this checkout
 script/screenshots-from-log -C ../mhr_gpui_kit run.log
 ```
 
@@ -118,16 +119,6 @@ script/screenshots-from-log -C ../mhr_gpui_kit run.log
 
 The images then depend on the Mesa and LLVM versions and on the CPU features llvmpipe compiles
 for (the "256 bits" in the adapter name is AVX2).
-
-Checked on the build box (Ubuntu 24.04, Mesa 25.2.8, LLVM 20.1.2, AVX2, no GPU), with the 7
-goldens here and the 7 in mhr_gpui_kit:
-
-| Run | Result |
-|---|---|
-| Both suites, 3 runs with parallel test threads and 1 with `--test-threads=1` | Every capture matched its golden exactly, every run |
-| The same scenes rendered on 3 or 4 threads at once, in the tests themselves | Identical images |
-| GPUI Kit's suite with `LP_NUM_THREADS=1`, one llvmpipe rasterizer thread | Matched the goldens exactly |
-| One logical pixel more space between GPUI Kit's buttons | The 3 button goldens failed (11,017 of 190,080 pixels changed in one) and the diffs showed the shifted buttons |
 
 ## Tolerance
 
@@ -166,8 +157,7 @@ panics, as GPUI does with a missing font.
 
 ## Changes to the gpui crates
 
-The harness needs two additions, both behind the `test-support` feature, so `gpui-pre` and
-`gpui-pre-wgpu` no longer match crates.io in `script/verify-upstream.sh`:
+The harness needs two additions, both behind the `test-support` feature:
 
 - `HeadlessAppContext::simulate_window_scale_factor_change` in `gpui-pre`, as
   `TestAppContext` already has, since headless windows open at scale 2

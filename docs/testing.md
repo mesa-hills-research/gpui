@@ -44,6 +44,6 @@ This reaches further than desktop: Android draws through the same wgpu renderer 
 same cosmic-text system, so screenshot tests on Linux cover Android's rendering and text. They
 leave out its platform code: touch, IME, surfaces and the lifecycle.
 
-`gpui-pre-screenshot` builds golden-image tests on this, with bundled fonts and a software
-adapter so every run gives the same pixels. [screenshots.md](screenshots.md) covers writing the
-tests and updating their goldens.
+`gpui-pre-screenshot` builds golden-image tests on this, with bundled fonts and the software
+adapter even where a GPU is present. [screenshots.md](screenshots.md) covers writing the tests and
+updating their goldens.

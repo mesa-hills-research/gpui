@@ -66,9 +66,8 @@ let shot = app.render_view(size(px(120.), px(40.)), 2.625, |_, cx| cx.new(|_| Ba
 gpui_screenshot::goldens!().assert("badge", &shot); // tests/screenshots/badge.png
 ```
 
-On the build box all 14 goldens matched exactly in each of four runs, three with parallel test
-threads and one with a single thread. `UPDATE_GOLDENS=1 cargo test` rewrites goldens after an
-intended change. [docs/screenshots.md](docs/screenshots.md) covers writing the tests, reviewing failures, running
+`UPDATE_GOLDENS=1 cargo test` rewrites goldens after an intended change.
+[docs/screenshots.md](docs/screenshots.md) covers writing the tests, reviewing failures, running
 them on a remote machine and why the pixels repeat exactly.
 
 ## License
