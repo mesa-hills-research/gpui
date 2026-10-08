@@ -48,8 +48,8 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    (cd bump && bun script/bump-gpui.ts <version> --zed ../zed --stage-only)
    ```
 
-   The output should match the run's log line for line, apart from the "published files changed
-   since" line, which an explicit version skips. The staged workspace is
+   The output should match the run's log, apart from the "published files changed since" line,
+   which an explicit version skips. The staged workspace is
    `bump/target/gpui-pre/workspace`.
 
 3. **Commit it on `upstream`**, replacing the whole tree:
@@ -63,19 +63,18 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    ```
 
    `--force` keeps files that a crate's own `.gitignore` would hide, and `':!target'` keeps a
-   local build out. The commit message records
-   the revisions, the command and the verification, as the 0.3.8 commit does.
+   local build out. The commit message records the revisions and the command, as the 0.3.8
+   commit does.
 
-4. **Verify it** from a checkout of `main`, against a worktree of `upstream`:
+4. **Compare it with crates.io** from a checkout of `main`, against a worktree of `upstream`:
 
    ```sh
    git worktree add --detach ../mhr_gpui-upstream upstream
    script/verify-upstream.sh -C ../mhr_gpui-upstream
    ```
 
-   The script packages every gpui-pre crate with `cargo package --no-verify`, downloads the
-   published `.crate` files, checks them against the crates.io index checksums and compares the
-   two byte for byte. Every crate should match.
+   The script packages each gpui-pre crate and compares it with the published one. Every crate
+   should match.
 
 5. **Merge into `main`** with `git merge upstream`. Conflicts mark lines the fork changed too.
    If `Cargo.lock` conflicts, take upstream's and let cargo add `gpui-pre-mobile`'s dependencies
@@ -83,9 +82,8 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    - fix `gpui-pre-mobile` where gpui's API moved: its gpui dependencies follow the workspace
      version on their own, and breaks show up in the checks in [mobile.md](mobile.md)
    - run mhr_gpui_kit's tests against the new `main`
-   - run `script/verify-upstream.sh` on `main`. It lists the crates the fork has changed. A
-     change in one crate also changes the `Cargo.lock` packaged with the crates that use it, and
-     the script reports those as differing "in Cargo.lock only".
+   - run `script/verify-upstream.sh` on `main` to list the crates the fork has changed. Crates
+     that only use a changed crate show as differing "in Cargo.lock only".
 
 ## The mobile crate
 
