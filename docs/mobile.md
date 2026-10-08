@@ -17,18 +17,17 @@ Upstream's README calls it experimental and lists IME composition, accessibility
 lifecycle hooks as incomplete. GPUI Kit's mobile guide documents the iOS simulator path and says
 Android was validated for one AI chat screen.
 
-## What has been checked
+## Status
 
-On Linux, with rustc 1.99.0, at the commit that brought the crate to gpui-pre 0.3.8:
+On gpui-pre 0.3.8:
 
-| Check | Result |
-|---|---|
-| `cargo test -p gpui-pre-mobile` | 46 unit tests pass. Two doctests are snippets without imports and fail to compile, as upstream's do. |
-| `cargo check -p gpui-pre-mobile --all-targets --target aarch64-linux-android` | Passes, no warnings |
-| The same for `aarch64-apple-ios` and `aarch64-apple-ios-sim` | Passes, no warnings |
-| Example, `cargo check` and `cargo build --lib` for `aarch64-linux-android` | Pass with NDK r29. The `.so` exports `ANativeActivity_onCreate` and the JNI entry points. |
-| The crate check and the example's `.so` for `x86_64-linux-android`, the emulator target | Pass |
-| Example, `cargo check --target aarch64-apple-ios` | Fails on Linux: `ring` and `aws-lc-sys` compile C with the iOS SDK, and `backtrace` hits the libc break below |
+- `cargo check -p gpui-pre-mobile --all-targets --target <target>` passes for
+  `aarch64-linux-android`, `x86_64-linux-android`, `aarch64-apple-ios` and
+  `aarch64-apple-ios-sim`. The unit tests pass on Linux. Two doctests are snippets without imports
+  and fail to compile, as upstream's do.
+- The example app's `.so` builds and links with NDK r29 for both Android targets.
+- On Linux the example fails to type-check for iOS: `ring` and `aws-lc-sys` compile C with the iOS
+  SDK, and `backtrace` hits the libc break below.
 
 Still to do: an APK, a run on a device or emulator, and anything on a Mac.
 
@@ -62,7 +61,7 @@ workspace.
 ## iOS
 
 Building and running need a Mac with Xcode, and XcodeGen for the example. On Linux the crate
-type-checks for iOS, which catches API breaks such as the one the 0.3.8 port fixed.
+type-checks for iOS, which catches breaks in gpui's API.
 
 libc 0.2.190 (2026-10-02) declares `_dyld_image_count` and its siblings for macOS only, and
 backtrace 0.3.76, the newest release, still calls them on iOS. With a fresh lock file, backtrace

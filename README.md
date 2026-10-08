@@ -13,10 +13,8 @@ Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
 
 | Crates | Source | State |
 |---|---|---|
-| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged: repackaging them gives the crates.io files byte for byte |
+| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged |
 | `gpui-pre-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental, see [Mobile](#mobile) |
-
-`script/verify-upstream.sh` repeats the byte-for-byte check against crates.io.
 
 ## Using it
 
@@ -35,10 +33,9 @@ gpui-pre-mobile   = { git = "https://github.com/mesa-hills-research/mhr_gpui", r
 
 ## Following upstream
 
-Each gpui-pre release lands on the `upstream` branch as one commit holding the crates exactly as
-GPUI Kit's tooling stages them for crates.io, made by running that tooling at the revisions the
-release used and checked against the published crates. `main` merges `upstream` and carries the
-fork's own changes on top. [docs/upstream.md](docs/upstream.md) has the steps.
+Each gpui-pre release lands on the `upstream` branch as one commit holding the crates as GPUI
+Kit's tooling stages them for crates.io. `main` merges `upstream` and carries the fork's own
+changes on top. [docs/upstream.md](docs/upstream.md) has the steps.
 
 ## Mobile
 
@@ -47,11 +44,10 @@ fork's own changes on top. [docs/upstream.md](docs/upstream.md) has the steps.
 accessibility and the app lifecycle are incomplete. Its gpui dependencies come from this
 workspace, so it always builds against the gpui beside it.
 
-| Target | Checked so far |
+| Target | State |
 |---|---|
 | Android (`aarch64-linux-android`, `x86_64-linux-android`) | Type-checks, and the example app's `.so` builds and links with NDK r29 |
 | iOS (`aarch64-apple-ios`, `-sim`) | Type-checks on Linux. Linking and running need a Mac. |
-| Linux host | 46 unit tests pass |
 
 [docs/mobile.md](docs/mobile.md) covers building, the gaps and the open upstream work.
 [docs/testing.md](docs/testing.md) covers tests, including headless screenshots on Linux.

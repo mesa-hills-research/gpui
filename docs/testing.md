@@ -33,11 +33,10 @@ let image = cx.capture_screenshot(window.into())?; // an image::RgbaImage
 image.save("screenshot.png")?;
 ```
 
-On the build box (Ubuntu 24.04, Mesa 25.2.8, no GPU) wgpu chose "llvmpipe (LLVM 20.1.2, 256
-bits)" through Vulkan. A 240×100 window came back as a 480×200 image, since the test platform
-renders at scale 2, with exact fill colors and anti-aliased DejaVu text, and three runs produced
-the same PNG byte for byte. EGL logs "DRI2: failed to load driver" while wgpu probes its GL
-backend, which leaves the Vulkan result unaffected.
+On a machine without a GPU, wgpu draws through lavapipe on Vulkan. The test platform renders at
+scale 2, so a 240×100 window comes back as a 480×200 image, and repeated runs give the same
+pixels. EGL may log "DRI2: failed to load driver" while wgpu probes its GL backend, which leaves
+the Vulkan renderer unaffected.
 
 This reaches further than desktop: Android draws through the same wgpu renderer core and the
 same cosmic-text system, so screenshot tests on Linux cover Android's rendering and text. They
