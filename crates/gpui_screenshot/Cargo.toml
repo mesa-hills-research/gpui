@@ -20,5 +20,8 @@ image = { workspace = true }
 png = "0.18"
 sha2 = { workspace = true }
 
+[dev-dependencies]
+swash = { workspace = true }
+
 [lints]
 workspace = true

@@ -2710,6 +2710,7 @@ dependencies = [
  "image",
  "png 0.18.0",
  "sha2",
+ "swash",
 ]
 
 [[package]]
