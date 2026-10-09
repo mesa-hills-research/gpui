@@ -21,7 +21,7 @@ if [ "${1:-}" = "-C" ]; then
   shift 2
 fi
 cd "$root"
-agent="mhr_gpui verify-upstream"
+agent="mesa-hills-research/gpui verify-upstream"
 
 version=${1:-$(sed -n 's/^gpui = {.*package = "gpui-pre", version = "=\([^"]*\)".*/\1/p' Cargo.toml)}
 [ -n "$version" ] || { echo "verify-upstream: cannot read the gpui-pre version from Cargo.toml" >&2; exit 2; }
