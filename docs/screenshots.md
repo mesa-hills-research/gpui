@@ -156,6 +156,11 @@ domain), each with its license. A weight between the bundled ones resolves to th
 bundled weight, so semibold (600) text is drawn in Bold. Text in a family that isn't loaded
 panics, as GPUI does with a missing font.
 
+The variable-font tests add Figtree 2.002 from
+[google/fonts](https://github.com/google/fonts/tree/main/ofl/figtree) (SIL Open Font License
+1.1), a variable font with an upright and an italic file, kept with its license in
+`crates/gpui_screenshot/tests/fonts`.
+
 ## Changes to the gpui crates
 
 The harness needs two additions, both behind the `test-support` feature:

@@ -76,7 +76,8 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    The script packages each gpui-pre crate and compares it with the published one. Every crate
    should match.
 
-5. **Merge into `main`** with `git merge upstream`. Conflicts mark lines the fork changed too.
+5. **Merge into `main`** with `git merge upstream`. Conflicts mark lines the fork changed too,
+   listed in [Changes to the gpui crates](#changes-to-the-gpui-crates).
    If `Cargo.lock` conflicts, take upstream's and let cargo add `gpui-pre-mobile`'s dependencies
    back with `cargo metadata --format-version 1 > /dev/null`. Then:
    - fix `gpui-pre-mobile` where gpui's API moved: its gpui dependencies follow the workspace
@@ -84,6 +85,19 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    - run the GPUI Kit fork's tests against the new `main`
    - run `script/verify-upstream.sh` on `main` to list the crates the fork has changed. Crates
      that only use a changed crate show as differing "in Cargo.lock only".
+
+## Changes to the gpui crates
+
+- **Variable font weights**, in `gpui-pre-wgpu`'s `src/cosmic_text_system.rs`, the text system
+  of Linux and Android. It chose a face for the requested weight and then drew every weight of a
+  variable face at the face's default, so Bold in a variable font such as Ubuntu Sans Mono came out
+  Regular. Each weight of a variable face now gets its own `FontId`, shaped and rasterized at that
+  point of the `wght` axis. Italic comes from the family's italic face, and other axes (`ital`,
+  `slnt`, `wdth`) stay at their defaults, since cosmic-text shapes along `wght` alone.
+  `crates/gpui_screenshot/tests/variable_fonts.rs` covers it. Zed's gpui has the same bug, which
+  hasn't been reported upstream yet.
+- **Screenshot test support** in `gpui-pre` and `gpui-pre-wgpu`, behind their `test-support`
+  feature. [screenshots.md](screenshots.md#changes-to-the-gpui-crates) has the details.
 
 ## The mobile crate
 
