@@ -13,7 +13,7 @@ Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
 
 | Crates | Source | State |
 |---|---|---|
-| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged, apart from [a fix](docs/upstream.md#changes-to-the-gpui-crates) for variable font weights on Linux and Android, and two test-support additions to `gpui-pre` and `gpui-pre-wgpu` for screenshot tests |
+| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged, apart from [a few changes](docs/upstream.md#changes-to-the-gpui-crates): a fix for variable font weights on Linux and Android, recent files in Windows jump lists, and two test-support additions to `gpui-pre` and `gpui-pre-wgpu` for screenshot tests |
 | `gpui-pre-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental, see [Mobile](#mobile) |
 | `gpui-pre-screenshot` (`crates/gpui_screenshot`) | This fork | Golden-image tests for GPUI views, see [Screenshot tests](#screenshot-tests) |
 

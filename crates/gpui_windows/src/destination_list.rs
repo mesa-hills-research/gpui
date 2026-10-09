@@ -1,37 +1,47 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    ffi::c_void,
+    mem::ManuallyDrop,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use itertools::Itertools;
 use smallvec::SmallVec;
 use windows::{
     Win32::{
-        Foundation::PROPERTYKEY,
+        Foundation::{E_ACCESSDENIED, PROPERTYKEY},
         Globalization::u_strlen,
-        System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, StructuredStorage::PROPVARIANT},
+        System::Com::{
+            CLSCTX_INPROC_SERVER, CoCreateInstance, CoTaskMemFree, StructuredStorage::PROPVARIANT,
+        },
         UI::{
             Controls::INFOTIPSIZE,
             Shell::{
                 Common::{IObjectArray, IObjectCollection},
-                DestinationList, EnumerableObjectCollection, ICustomDestinationList, IShellLinkW,
+                DestinationList, EnumerableObjectCollection,
+                GetCurrentProcessExplicitAppUserModelID, ICustomDestinationList, IShellItem,
+                IShellLinkW, KDC_RECENT,
                 PropertiesSystem::IPropertyStore,
-                ShellLink,
+                SHARD_APPIDINFO, SHARD_PATHW, SHARDAPPIDINFO, SHAddToRecentDocs,
+                SHCreateItemFromParsingName, ShellLink,
             },
         },
     },
-    core::{GUID, HSTRING, Interface},
+    core::{GUID, HSTRING, Interface, PCWSTR},
 };
 
-use gpui::{Action, MenuItem, SharedString};
+use gpui::{Action, JumpListIcon, JumpListRecent, MenuItem, SharedString};
 
 pub(crate) struct JumpList {
     pub(crate) dock_menus: Vec<DockMenuItem>,
-    pub(crate) recent_workspaces: Arc<[SmallVec<[PathBuf; 2]>]>,
+    pub(crate) recent: Arc<JumpListRecent>,
 }
 
 impl JumpList {
     pub(crate) fn new() -> Self {
         Self {
             dock_menus: Vec::default(),
-            recent_workspaces: Arc::default(),
+            recent: Arc::default(),
         }
     }
 }
@@ -62,11 +72,11 @@ impl DockMenuItem {
 // This code is based on the example from Microsoft:
 // https://github.com/microsoft/Windows-classic-samples/blob/main/Samples/Win7Samples/winui/shell/appshellintegration/RecipePropertyHandler/RecipePropertyHandler.cpp
 pub(crate) fn update_jump_list(
-    recent_workspaces: &[SmallVec<[PathBuf; 2]>],
+    recent: &JumpListRecent,
     dock_menus: &[(SharedString, SharedString)],
 ) -> anyhow::Result<Vec<SmallVec<[PathBuf; 2]>>> {
     let (list, removed) = create_destination_list()?;
-    add_recent_folders(&list, recent_workspaces, removed.as_ref())?;
+    add_recent(&list, recent, removed.as_ref())?;
     add_dock_menu(&list, dock_menus)?;
     unsafe { list.CommitList() }?;
     Ok(removed)
@@ -130,16 +140,17 @@ fn add_dock_menu(
     }
 }
 
-fn add_recent_folders(
+fn add_recent(
     list: &ICustomDestinationList,
-    entries: &[SmallVec<[PathBuf; 2]>],
+    recent: &JumpListRecent,
     removed: &Vec<SmallVec<[PathBuf; 2]>>,
 ) -> anyhow::Result<()> {
     unsafe {
         let tasks: IObjectCollection =
             CoCreateInstance(&EnumerableObjectCollection, None, CLSCTX_INPROC_SERVER)?;
+        let (icon, icon_index) = icon_location(&recent.icon)?;
 
-        for folder_path in entries.iter().filter(|path| !removed.contains(path)) {
+        for folder_path in recent.entries.iter().filter(|path| !removed.contains(path)) {
             let argument = HSTRING::from(
                 folder_path
                     .iter()
@@ -154,10 +165,6 @@ fn add_recent_folders(
                     .collect::<Vec<_>>()
                     .join("\n"),
             );
-            // simulate folder icon
-            // https://github.com/microsoft/vscode/blob/7a5dc239516a8953105da34f84bae152421a8886/src/vs/platform/workspaces/electron-main/workspacesHistoryMainService.ts#L380
-            let icon = HSTRING::from("explorer.exe");
-
             let display = folder_path
                 .iter()
                 .map(|p| {
@@ -170,22 +177,80 @@ fn add_recent_folders(
             tasks.AddObject(&create_shell_link(
                 argument,
                 description,
-                Some(icon),
+                Some((&icon, icon_index)),
                 &display,
             )?)?;
         }
 
         if tasks.GetCount().unwrap_or(0) > 0 {
-            list.AppendCategory(&HSTRING::from("Recent Folders"), &tasks)?;
+            match list.AppendCategory(&HSTRING::from(recent.title.as_str()), &tasks) {
+                Ok(()) => {}
+                // The user turned off recent items in jump lists. The tasks still go in.
+                Err(error) if error.code() == E_ACCESSDENIED => {
+                    log::info!("Windows declined the jump list's recent items: {error}");
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if recent.system_recent {
+            list.AppendKnownCategory(KDC_RECENT)?;
         }
         Ok(())
     }
 }
 
+/// The file and index of the icon beside each recent entry.
+fn icon_location(icon: &JumpListIcon) -> anyhow::Result<(HSTRING, i32)> {
+    Ok(match icon {
+        // simulate folder icon
+        // https://github.com/microsoft/vscode/blob/7a5dc239516a8953105da34f84bae152421a8886/src/vs/platform/workspaces/electron-main/workspacesHistoryMainService.ts#L380
+        JumpListIcon::Folder => (HSTRING::from("explorer.exe"), 0),
+        JumpListIcon::App => (HSTRING::from(std::env::current_exe()?.as_os_str()), 0),
+        JumpListIcon::File { path, index } => (HSTRING::from(path.as_os_str()), *index),
+    })
+}
+
+/// Tells Windows that the document at `path` was used, for the user's Recent
+/// items and the Recent category of the app's jump list.
+pub(crate) fn add_recent_document(path: &Path) {
+    let path = HSTRING::from(path.as_os_str());
+    // A process with an explicit AppUserModelID names it, so that the document
+    // counts for that app's jump list.
+    if let Ok(app_id) = unsafe { GetCurrentProcessExplicitAppUserModelID() } {
+        let added = add_recent_document_for_app(&path, PCWSTR(app_id.0));
+        // SAFETY: Windows allocated the ID for this caller to free.
+        unsafe { CoTaskMemFree(Some(app_id.0 as *const c_void)) };
+        match added {
+            Ok(()) => return,
+            Err(error) => log::warn!("failed to add {path} to the app's recent documents: {error}"),
+        }
+    }
+    // SAFETY: `path` is a null-terminated wide string that outlives the call.
+    unsafe { SHAddToRecentDocs(SHARD_PATHW.0 as u32, Some(path.as_ptr().cast())) };
+}
+
+fn add_recent_document_for_app(path: &HSTRING, app_id: PCWSTR) -> windows::core::Result<()> {
+    let item: IShellItem = unsafe { SHCreateItemFromParsingName(path, None)? };
+    let info = SHARDAPPIDINFO {
+        psi: ManuallyDrop::new(Some(item)),
+        pszAppID: app_id,
+    };
+    // SAFETY: `info` holds a live shell item and a null-terminated ID, both
+    // outliving the call.
+    unsafe {
+        SHAddToRecentDocs(
+            SHARD_APPIDINFO.0 as u32,
+            Some(std::ptr::from_ref(&info).cast()),
+        )
+    };
+    drop(ManuallyDrop::into_inner(info.psi));
+    Ok(())
+}
+
 fn create_shell_link(
     argument: HSTRING,
     description: HSTRING,
-    icon: Option<HSTRING>,
+    icon: Option<(&HSTRING, i32)>,
     display: &str,
 ) -> anyhow::Result<IShellLinkW> {
     unsafe {
@@ -194,8 +259,8 @@ fn create_shell_link(
         link.SetPath(&exe_path)?;
         link.SetArguments(&argument)?;
         link.SetDescription(&description)?;
-        if let Some(icon) = icon {
-            link.SetIconLocation(&icon, 0)?;
+        if let Some((icon, index)) = icon {
+            link.SetIconLocation(icon, index)?;
         }
         let store: IPropertyStore = link.cast()?;
         let title = PROPVARIANT::from(display);

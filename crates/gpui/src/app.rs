@@ -42,6 +42,7 @@ pub use visual_test_context::*;
 
 #[cfg(any(feature = "inspector", debug_assertions))]
 use crate::InspectorElementRegistry;
+use crate::JumpListRecent;
 use crate::asset_cache::CachedLoad;
 use crate::{
     Action, ActionBuildError, ActionRegistry, ActivationPolicy, ActivityGuard, Any, AnyView,
@@ -2689,18 +2690,48 @@ impl App {
     /// The list is usually shown on the application icon's context menu in the dock,
     /// and allows to open the recent files via that context menu.
     /// If the path is already in the list, it will be moved to the bottom of the list.
+    ///
+    /// On Windows the path joins the user's Recent items in File Explorer and the
+    /// Start menu, under the app's AppUserModelID when it has one (see
+    /// [`Self::set_app_identity`]). The app's jump list shows it in Windows' own
+    /// Recent category, for file types the app is registered to open. That category
+    /// shows by default, and once the app sets a dock menu or a jump list, only when
+    /// [`JumpListRecent::system_recent`] asks for it. An app that keeps its own list
+    /// of recent documents shows it with [`Self::update_jump_list_with`].
     pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
     }
 
     /// Updates the jump list with the updated list of recent paths for the application, only used on Windows for now.
     /// Note that this also sets the dock menu on Windows.
+    ///
+    /// The entries appear under "Recent Folders", each with a folder icon.
+    /// [`Self::update_jump_list_with`] chooses the title and the icon.
     pub fn update_jump_list(
         &self,
         menus: Vec<MenuItem>,
         entries: Vec<SmallVec<[PathBuf; 2]>>,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        self.platform.update_jump_list(menus, entries)
+        self.update_jump_list_with(
+            menus,
+            JumpListRecent {
+                entries,
+                ..JumpListRecent::default()
+            },
+        )
+    }
+
+    /// Updates the Windows jump list: `menus` become its tasks, as with
+    /// [`Self::set_dock_menu`], and `recent` its category of recent items, with the
+    /// title and icon it names. Returns the entries the user removed from the jump
+    /// list since the last update, which it leaves out. Other platforms return no
+    /// entries.
+    pub fn update_jump_list_with(
+        &self,
+        menus: Vec<MenuItem>,
+        recent: JumpListRecent,
+    ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
+        self.platform.update_jump_list(menus, recent)
     }
 
     /// Dispatch an action to the currently active window or global action handler

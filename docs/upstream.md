@@ -98,6 +98,16 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
   hasn't been reported upstream yet.
 - **Screenshot test support** in `gpui-pre` and `gpui-pre-wgpu`, behind their `test-support`
   feature. [screenshots.md](screenshots.md#changes-to-the-gpui-crates) has the details.
+- **Recent files in Windows jump lists**, in `gpui-pre`'s `src/platform.rs` and `src/app.rs` and
+  `gpui-pre-windows`' `src/destination_list.rs` and `src/platform.rs`. Zed lists folders, so
+  `App::update_jump_list` titles the recent entries "Recent Folders" with a folder icon beside
+  each, and it still does. `App::update_jump_list_with` takes a `JumpListRecent` that names the
+  title, the icon (a folder, the app's own, or one from a file) and whether to add Windows' own
+  Recent category below it. `Platform::update_jump_list` takes the `JumpListRecent`.
+  `App::add_recent_document` now works on Windows too, through `SHAddToRecentDocs` with the
+  process's AppUserModelID when it has one. A jump list whose recent entries Windows declines,
+  because the user turned off recent items, keeps its tasks. `gpui-pre-apple`'s copy of
+  `platform.rs` under `vendor/gpui` follows the original.
 
 ## The mobile crate
 

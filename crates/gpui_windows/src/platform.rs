@@ -332,10 +332,10 @@ impl WindowsPlatform {
             .iter()
             .map(|menu| (menu.name.clone(), menu.description.clone()))
             .collect::<Vec<_>>();
-        let recent_workspaces = borrow.recent_workspaces.clone();
+        let recent = borrow.recent.clone();
         self.background_executor
             .spawn(async move {
-                update_jump_list(&recent_workspaces, &dock_menus).log_err();
+                update_jump_list(&recent, &dock_menus).log_err();
             })
             .detach();
     }
@@ -343,7 +343,7 @@ impl WindowsPlatform {
     fn update_jump_list(
         &self,
         menus: Vec<MenuItem>,
-        entries: Vec<SmallVec<[PathBuf; 2]>>,
+        recent: JumpListRecent,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         let mut actions = Vec::new();
         menus.into_iter().for_each(|menu| {
@@ -353,15 +353,15 @@ impl WindowsPlatform {
         });
         let mut jump_list = self.inner.state.jump_list.borrow_mut();
         jump_list.dock_menus = actions;
-        jump_list.recent_workspaces = entries.into();
+        jump_list.recent = Arc::new(recent);
         let dock_menus = jump_list
             .dock_menus
             .iter()
             .map(|menu| (menu.name.clone(), menu.description.clone()))
             .collect::<Vec<_>>();
-        let recent_workspaces = jump_list.recent_workspaces.clone();
+        let recent = jump_list.recent.clone();
         self.background_executor.spawn(async move {
-            update_jump_list(&recent_workspaces, &dock_menus)
+            update_jump_list(&recent, &dock_menus)
                 .log_err()
                 .unwrap_or_default()
         })
@@ -1126,12 +1126,16 @@ impl Platform for WindowsPlatform {
         }
     }
 
+    fn add_recent_document(&self, path: &Path) {
+        add_recent_document(path);
+    }
+
     fn update_jump_list(
         &self,
         menus: Vec<MenuItem>,
-        entries: Vec<SmallVec<[PathBuf; 2]>>,
+        recent: JumpListRecent,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
-        self.update_jump_list(menus, entries)
+        self.update_jump_list(menus, recent)
     }
 }
 

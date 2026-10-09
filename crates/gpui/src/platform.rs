@@ -455,7 +455,7 @@ pub trait Platform: 'static {
     fn update_jump_list(
         &self,
         _menus: Vec<MenuItem>,
-        _entries: Vec<SmallVec<[PathBuf; 2]>>,
+        _recent: JumpListRecent,
     ) -> Task<Vec<SmallVec<[PathBuf; 2]>>> {
         Task::ready(Vec::new())
     }
@@ -591,6 +591,59 @@ pub trait PlatformDisplay: Debug {
         let origin = point(center.x - offset.width, center.y - offset.height);
         Bounds::new(origin, clipped_window_size)
     }
+}
+
+/// The category of recent items in a Windows jump list, for
+/// [`App::update_jump_list_with`].
+///
+/// The default lists folders: the title "Recent Folders" and a folder icon
+/// beside each entry, as [`App::update_jump_list`] shows them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JumpListRecent {
+    /// The category's heading.
+    pub title: SharedString,
+    /// The entries, top first. Choosing one starts the app with the entry's
+    /// paths as its arguments, each in quotes.
+    pub entries: Vec<SmallVec<[PathBuf; 2]>>,
+    /// The icon beside each entry.
+    pub icon: JumpListIcon,
+    /// Also shows Windows' own Recent category, below this one. Windows fills
+    /// it from [`App::add_recent_document`], with the documents whose file
+    /// types the app is registered to open. An app with an AppUserModelID
+    /// (see [`App::set_app_identity`]) names it in the registration of those
+    /// types, as the `AppUserModelID` value of their ProgID. Leave this off
+    /// when `entries` already lists those documents, since Windows would show
+    /// them twice.
+    pub system_recent: bool,
+}
+
+impl Default for JumpListRecent {
+    fn default() -> Self {
+        Self {
+            title: "Recent Folders".into(),
+            entries: Vec::new(),
+            icon: JumpListIcon::default(),
+            system_recent: false,
+        }
+    }
+}
+
+/// The icon beside each entry of a [`JumpListRecent`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum JumpListIcon {
+    /// A folder, File Explorer's icon.
+    #[default]
+    Folder,
+    /// The app's own icon, the first icon in its executable.
+    App,
+    /// The icon at `index` in an `.ico`, `.exe` or `.dll` file. A negative
+    /// index names an icon resource by its ID.
+    File {
+        /// The file that holds the icon.
+        path: PathBuf,
+        /// The icon's position in the file, or minus its resource ID.
+        index: i32,
+    },
 }
 
 /// A notification posted to the operating system's notification center,
@@ -3762,5 +3815,19 @@ mod tests {
     #[test]
     fn test_window_button_layout_parse_all_invalid() {
         assert!(WindowButtonLayout::parse("asdfghjkl").is_err());
+    }
+}
+
+#[cfg(test)]
+mod jump_list_tests {
+    use super::*;
+
+    #[test]
+    fn test_jump_list_recent_defaults_to_folders() {
+        let recent = JumpListRecent::default();
+        assert_eq!(recent.title, "Recent Folders");
+        assert_eq!(recent.icon, JumpListIcon::Folder);
+        assert!(recent.entries.is_empty());
+        assert!(!recent.system_recent);
     }
 }
