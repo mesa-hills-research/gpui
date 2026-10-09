@@ -57,6 +57,9 @@ struct CosmicTextSystemState {
     /// Caches the `FontId`s associated with a specific family to avoid iterating the font database
     /// for every font face in a family.
     font_ids_by_family_cache: HashMap<FontKey, SmallVec<[FontId; 4]>>,
+    /// The instances of variable faces at weights other than their own, by the face's `FontId`
+    /// and the weight.
+    variable_instance_ids: HashMap<(FontId, u16), FontId>,
     system_font_fallback: String,
     missing_glyph_sink: Option<Arc<dyn MissingGlyphSink>>,
 }
@@ -68,6 +71,64 @@ struct LoadedFont {
     /// resolved at load time so `layout_line` shares one chain across faces.
     /// `Arc` keeps clone cheap on the per-run hot path.
     user_fallback_chain: Arc<[(FontId, SharedString)]>,
+    /// The weight the font is shaped and drawn at: the face's own weight for a static face, a
+    /// point on the `wght` axis for a variable one.
+    weight: Weight,
+    /// The range of the `wght` axis, for a variable face.
+    wght_axis: Option<(f32, f32)>,
+    /// `weight` as swash's normalized variation coordinates, empty for a static face.
+    coords: Vec<swash::NormalizedCoord>,
+}
+
+const WGHT: swash::Tag = swash::tag_from_bytes(b"wght");
+
+impl LoadedFont {
+    /// A face shaped and drawn at `weight`, or at its own weight if it has no `wght` axis.
+    fn new(
+        font: Arc<CosmicTextFont>,
+        weight: Weight,
+        features: CosmicFontFeatures,
+        is_known_emoji_font: bool,
+        user_fallback_chain: Arc<[(FontId, SharedString)]>,
+    ) -> Self {
+        let swash = font.as_swash();
+        let wght_axis = swash
+            .variations()
+            .find_by_tag(WGHT)
+            .map(|axis| (axis.min_value(), axis.max_value()));
+        let (weight, coords) = match wght_axis {
+            Some(axis) => {
+                let weight = clamp_weight(axis, weight);
+                let coords = swash
+                    .variations()
+                    .normalized_coords([(WGHT, f32::from(weight.0))])
+                    .collect();
+                (weight, coords)
+            }
+            None => (weight, Vec::new()),
+        };
+        Self {
+            font,
+            features,
+            is_known_emoji_font,
+            user_fallback_chain,
+            weight,
+            wght_axis,
+            coords,
+        }
+    }
+
+    /// Whether this is the face `id` at `weight`, the weight cosmic-text shaped a glyph at.
+    fn is_instance(&self, id: cosmic_text::fontdb::ID, weight: Weight) -> bool {
+        self.font.id() == id
+            && self
+                .wght_axis
+                .is_none_or(|axis| clamp_weight(axis, weight) == self.weight)
+    }
+}
+
+fn clamp_weight((min, max): (f32, f32), weight: Weight) -> Weight {
+    Weight(f32::from(weight.0).clamp(min, max).round() as u16)
 }
 
 struct FontMatchProperties {
@@ -92,7 +153,8 @@ impl FontMatchProperties {
 }
 
 impl CosmicTextSystem {
-    /// Returns the selected face's weight and style, which may differ from the request.
+    /// Returns the weight the font is drawn at and the selected face's style, which may differ
+    /// from the request.
     pub fn font_weight_and_style(
         &self,
         font_id: FontId,
@@ -112,7 +174,7 @@ impl CosmicTextSystem {
             cosmic_text::Style::Italic => gpui::FontStyle::Italic,
             cosmic_text::Style::Oblique => gpui::FontStyle::Oblique,
         };
-        Ok((gpui::FontWeight(face.weight.0 as f32), style))
+        Ok((gpui::FontWeight(font.weight.0 as f32), style))
     }
 
     /// Builds reports for unresolved source indices after an outer text system
@@ -139,6 +201,7 @@ impl CosmicTextSystem {
             loaded_fonts: Vec::new(),
             loaded_font_ids_by_key: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
+            variable_instance_ids: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
             missing_glyph_sink: None,
         }))
@@ -158,6 +221,7 @@ impl CosmicTextSystem {
             loaded_fonts: Vec::new(),
             loaded_font_ids_by_key: HashMap::default(),
             font_ids_by_family_cache: HashMap::default(),
+            variable_instance_ids: HashMap::default(),
             system_font_fallback: system_font_fallback.to_string(),
             missing_glyph_sink: None,
         }))
@@ -204,8 +268,9 @@ impl PlatformTextSystem for CosmicTextSystem {
         };
 
         let ix = find_best_match(font, candidates, &state)?;
+        let face_id = candidates[ix];
 
-        Ok(candidates[ix])
+        state.variable_instance(face_id, Weight(font.weight.0.round() as u16))
     }
 
     fn prewarm_fonts(&self, font_ids: &[FontId]) {
@@ -213,13 +278,9 @@ impl PlatformTextSystem for CosmicTextSystem {
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        let metrics = self
-            .0
-            .read()
-            .loaded_font(font_id)
-            .font
-            .as_swash()
-            .metrics(&[]);
+        let lock = self.0.read();
+        let loaded_font = lock.loaded_font(font_id);
+        let metrics = loaded_font.font.as_swash().metrics(&loaded_font.coords);
 
         FontMetrics {
             units_per_em: metrics.units_per_em as u32,
@@ -239,7 +300,11 @@ impl PlatformTextSystem for CosmicTextSystem {
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
         let lock = self.0.read();
-        let glyph_metrics = lock.loaded_font(font_id).font.as_swash().glyph_metrics(&[]);
+        let loaded_font = lock.loaded_font(font_id);
+        let glyph_metrics = loaded_font
+            .font
+            .as_swash()
+            .glyph_metrics(&loaded_font.coords);
         let glyph_id = glyph_id.0 as u16;
         Ok(Bounds {
             origin: point(0.0, 0.0),
@@ -303,7 +368,7 @@ impl CosmicTextSystemState {
             primary_family_name: first_family.0.clone().into(),
             stretch: face.stretch,
             style: face.style,
-            weight: face.weight,
+            weight: loaded_font.weight,
             features: loaded_font.features.clone(),
             fallback_chain: Arc::clone(&loaded_font.user_fallback_chain),
         })
@@ -390,13 +455,13 @@ impl CosmicTextSystemState {
             .db()
             .faces()
             .filter(|face| face.families.iter().any(|family| *name == family.0))
-            .map(|face| (face.id, face.post_script_name.clone()))
+            .map(|face| (face.id, face.post_script_name.clone(), face.weight))
             .collect::<SmallVec<[_; 4]>>();
 
         let cosmic_features = cosmic_font_features(features)?;
 
         let mut loaded_font_ids = SmallVec::new();
-        for (database_id, postscript_name) in families {
+        for (database_id, postscript_name, weight) in families {
             let key = LoadedFontKey {
                 database_id,
                 font: loaded_font_key.clone(),
@@ -409,7 +474,7 @@ impl CosmicTextSystemState {
 
             let font = self
                 .font_system
-                .get_font(database_id, cosmic_text::Weight::NORMAL)
+                .get_font(database_id, weight)
                 .context("Could not load font")?;
 
             // HACK: To let the storybook run and render Windows caption icons. We should actually do better font fallback.
@@ -427,20 +492,64 @@ impl CosmicTextSystemState {
 
             let font_id = FontId(self.loaded_fonts.len());
             loaded_font_ids.push(font_id);
-            self.loaded_fonts.push(LoadedFont {
+            self.loaded_fonts.push(LoadedFont::new(
                 font,
-                features: cosmic_features.clone(),
-                is_known_emoji_font: check_is_known_emoji_font(&postscript_name),
-                user_fallback_chain: Arc::clone(&user_fallback_chain),
-            });
+                weight,
+                cosmic_features.clone(),
+                check_is_known_emoji_font(&postscript_name),
+                Arc::clone(&user_fallback_chain),
+            ));
             self.loaded_font_ids_by_key.insert(key, font_id);
         }
 
         Ok(loaded_font_ids)
     }
 
+    /// The font for the face `face_id` at `weight`. A variable face has a `FontId` for each
+    /// weight on its `wght` axis, so that shaping, rasterizing and the glyph cache all see the
+    /// weight. Other faces are returned as they are.
+    fn variable_instance(&mut self, face_id: FontId, weight: Weight) -> Result<FontId> {
+        let face = self.loaded_font(face_id);
+        let Some(axis) = face.wght_axis else {
+            return Ok(face_id);
+        };
+        let weight = clamp_weight(axis, weight);
+        if weight == face.weight {
+            return Ok(face_id);
+        }
+        let user_fallback_chain = Arc::clone(&face.user_fallback_chain);
+        if let Some(&font_id) = self.variable_instance_ids.get(&(face_id, weight.0)) {
+            // The face's fallback chain is resolved again when its family is reloaded.
+            self.loaded_fonts[font_id.0].user_fallback_chain = user_fallback_chain;
+            return Ok(font_id);
+        }
+
+        let database_id = face.font.id();
+        let features = face.features.clone();
+        let is_known_emoji_font = face.is_known_emoji_font;
+        let font = self
+            .font_system
+            .get_font(database_id, weight)
+            .context("Could not load font")?;
+        let font_id = FontId(self.loaded_fonts.len());
+        self.loaded_fonts.push(LoadedFont::new(
+            font,
+            weight,
+            features,
+            is_known_emoji_font,
+            user_fallback_chain,
+        ));
+        self.variable_instance_ids
+            .insert((face_id, weight.0), font_id);
+        Ok(font_id)
+    }
+
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        let glyph_metrics = self.loaded_font(font_id).font.as_swash().glyph_metrics(&[]);
+        let loaded_font = self.loaded_font(font_id);
+        let glyph_metrics = loaded_font
+            .font
+            .as_swash()
+            .glyph_metrics(&loaded_font.coords);
         Ok(Size {
             width: glyph_metrics.advance_width(glyph_id.0 as u16),
             height: glyph_metrics.advance_height(glyph_id.0 as u16),
@@ -516,11 +625,13 @@ impl CosmicTextSystemState {
             params.subpixel_variant.y as f32 / SUBPIXEL_VARIANTS_Y as f32 / params.scale_factor,
         );
 
+        // The coordinates are always set, since the scale context keeps the last scaler's.
         let mut scaler = self
             .swash_scale_context
             .builder(font_ref)
             .size(pixel_size * params.scale_factor)
             .hint(true)
+            .normalized_coords(&loaded_font.coords)
             .build();
 
         let sources: &[Source] = if params.is_emoji {
@@ -557,17 +668,21 @@ impl CosmicTextSystemState {
     /// `LoadedFont.features`, as it will have an arbitrarily chosen or empty value. The only
     /// current use of this field is for the *input* of `layout_line`, and so it's fine to use
     /// `font_id_for_cosmic_id` when computing the *output* of `layout_line`.
-    fn font_id_for_cosmic_id(&mut self, id: cosmic_text::fontdb::ID) -> Result<FontId> {
+    fn font_id_for_cosmic_id(
+        &mut self,
+        id: cosmic_text::fontdb::ID,
+        weight: Weight,
+    ) -> Result<FontId> {
         if let Some(ix) = self
             .loaded_fonts
             .iter()
-            .position(|loaded_font| loaded_font.font.id() == id)
+            .position(|loaded_font| loaded_font.is_instance(id, weight))
         {
             Ok(FontId(ix))
         } else {
             let font = self
                 .font_system
-                .get_font(id, cosmic_text::Weight::NORMAL)
+                .get_font(id, weight)
                 .context("failed to get fallback font from cosmic-text font system")?;
             let face = self
                 .font_system
@@ -575,13 +690,20 @@ impl CosmicTextSystemState {
                 .face(id)
                 .context("fallback font face not found in cosmic-text database")?;
 
+            // A static face keeps its own weight, and a variable one is drawn at the glyph's.
+            let weight = if font.as_swash().variations().find_by_tag(WGHT).is_some() {
+                weight
+            } else {
+                face.weight
+            };
             let font_id = FontId(self.loaded_fonts.len());
-            self.loaded_fonts.push(LoadedFont {
+            self.loaded_fonts.push(LoadedFont::new(
                 font,
-                features: CosmicFontFeatures::new(),
-                is_known_emoji_font: check_is_known_emoji_font(&face.post_script_name),
-                user_fallback_chain: Arc::from(Vec::new()),
-            });
+                weight,
+                CosmicFontFeatures::new(),
+                check_is_known_emoji_font(&face.post_script_name),
+                Arc::from(Vec::new()),
+            ));
 
             Ok(font_id)
         }
@@ -785,8 +907,8 @@ impl CosmicTextSystemState {
         for glyph in &layout.glyphs {
             let mut font_id = FontId(glyph.metadata);
             let mut loaded_font = self.loaded_font(font_id);
-            if loaded_font.font.id() != glyph.font_id {
-                match self.font_id_for_cosmic_id(glyph.font_id) {
+            if !loaded_font.is_instance(glyph.font_id, glyph.font_weight) {
+                match self.font_id_for_cosmic_id(glyph.font_id, glyph.font_weight) {
                     std::result::Result::Ok(resolved_id) => {
                         font_id = resolved_id;
                         loaded_font = self.loaded_font(font_id);
