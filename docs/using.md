@@ -1,9 +1,9 @@
-# Using mhr_gpui
+# Using the fork
 
 Every crate here keeps the crates.io package name, version and library name of the crate it
 replaces, so a `[patch.crates-io]` in the app's root `Cargo.toml` switches an app to the fork.
-Cargo applies only the root workspace's patches, so an app that uses mhr_gpui_kit patches the
-gpui crates itself too.
+Cargo applies only the root workspace's patches, so an app that uses the
+[GPUI Kit fork](https://github.com/mesa-hills-research/gpui_kit) patches the gpui crates itself too.
 
 ## The patch
 
@@ -13,44 +13,45 @@ its own, and it stays on crates.io.
 
 ```toml
 [patch.crates-io]
-gpui-pre                   = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-apple             = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-bench-metrics     = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-collections       = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-derive-refineable = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-http-client       = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-http-client-tls   = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-linux             = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-macos             = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-macros            = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-mobile            = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-perf              = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-platform          = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-refineable        = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-reqwest-client    = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-scheduler         = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-shared-string     = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-sum-tree          = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-util              = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-util-macros       = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-web               = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-wgpu              = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-windows           = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-zlog              = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-ztracing          = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-ztracing-macro    = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
+gpui-pre                   = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-apple             = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-bench-metrics     = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-collections       = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-derive-refineable = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-http-client       = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-http-client-tls   = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-linux             = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-macos             = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-macros            = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-mobile            = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-perf              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-platform          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-refineable        = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-reqwest-client    = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-scheduler         = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-shared-string     = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-sum-tree          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-util              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-util-macros       = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-web               = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-wgpu              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-windows           = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-zlog              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-ztracing          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-ztracing-macro    = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
 ```
 
 Cargo warns about entries the app's graph doesn't use, such as `gpui-pre-mobile` in a desktop app.
 Delete those.
 
 Then `cargo update -p gpui-pre` (or any cargo command without `--locked`) moves the lock file onto
-the patch. `cargo tree -i gpui-pre` should show one `gpui-pre` and it should come from mhr_gpui.
+the patch. `cargo tree -i gpui-pre` should show one `gpui-pre` and it should come from
+`github.com/mesa-hills-research/gpui`.
 
 ## Working against a local checkout
 
 For changes in progress, point the entries at a checkout instead, for example
-`gpui-pre = { path = "../mhr_gpui/crates/gpui" }`. The crates' directories:
+`gpui-pre = { path = "../gpui/crates/gpui" }`. The crates' directories:
 
 | Package | Directory |
 |---|---|

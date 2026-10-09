@@ -6,8 +6,9 @@
 - `cargo test -p gpui-pre-mobile` runs the mobile crate's unit tests.
 - `cargo test -p gpui-pre-screenshot` runs the screenshot harness's tests and its goldens of
   plain GPUI elements, on Linux.
-- mhr_gpui_kit's suite, about 2,650 tests, exercises the gpui crates through GPUI Kit. Run it from
-  an mhr_gpui_kit checkout whose `[patch.crates-io]` points at this one.
+- The suite of the [GPUI Kit fork](https://github.com/mesa-hills-research/gpui_kit), about 2,650
+  tests, exercises the gpui crates through GPUI Kit. Run it from a checkout of the kit whose
+  `[patch.crates-io]` points at this one.
 
 The gpui crates' own tests, examples and benchmarks don't build here. The release tooling leaves
 out their `[dev-dependencies]`, and several read fonts from Zed's `assets/` folder, which the

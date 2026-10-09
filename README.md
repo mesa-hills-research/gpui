@@ -1,10 +1,10 @@
-# mhr_gpui
+# gpui
 
-mhr_gpui is Mesa Hills Research's fork of [GPUI](https://www.gpui.rs), the GPU-accelerated UI
-framework of the [Zed](https://github.com/zed-industries/zed) editor, together with the
+This repository is Mesa Hills Research's fork of [GPUI](https://www.gpui.rs), the GPU-accelerated
+UI framework of the [Zed](https://github.com/zed-industries/zed) editor, together with the
 `gpui-pre-mobile` platform for iOS and Android. GPUI fixes and the mobile work live here, next to
-each other, and [mhr_gpui_kit](https://github.com/mesa-hills-research/mhr_gpui_kit), the fork of
-GPUI Kit, builds on it.
+each other, and [Mesa Hills Research's fork of GPUI Kit](https://github.com/mesa-hills-research/gpui_kit)
+builds on it.
 
 It tracks the `gpui-pre` crates that GPUI Kit publishes: snapshots of Zed's gpui, cut by GPUI
 Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
@@ -24,9 +24,9 @@ to the fork with a `[patch.crates-io]` and no code changes:
 
 ```toml
 [patch.crates-io]
-gpui-pre          = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-platform = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
-gpui-pre-mobile   = { git = "https://github.com/mesa-hills-research/mhr_gpui", rev = "<commit>" }
+gpui-pre          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-platform = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+gpui-pre-mobile   = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
 # ...one entry for every gpui-pre crate in the app's Cargo.lock
 ```
 
@@ -58,7 +58,7 @@ workspace, so it always builds against the gpui beside it.
 `gpui-pre-screenshot` renders GPUI views headlessly on Linux, on Mesa's software Vulkan driver
 with bundled fonts, and compares them with golden PNGs. Android draws through the same renderer
 and text system, so the goldens cover its rendering and text too. GPUI Kit's buttons, inputs,
-list and menu have goldens in mhr_gpui_kit.
+list and menu have goldens in the GPUI Kit fork.
 
 ```rust
 let mut app = gpui_screenshot::ScreenshotApp::new()?;

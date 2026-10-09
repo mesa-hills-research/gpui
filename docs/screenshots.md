@@ -47,7 +47,8 @@ fn badge() {
 - `with_assets` gives the app an asset source, for icons and images.
 - `add_fonts` adds fonts beyond the bundled ones, for CJK or emoji text.
 
-GPUI Kit's tests in mhr_gpui_kit, `crates/kit/tests/screenshots.rs`, show the whole pattern:
+GPUI Kit's tests in [the GPUI Kit fork](https://github.com/mesa-hills-research/gpui_kit),
+`crates/kit/tests/screenshots.rs`, show the whole pattern:
 GPUI Kit initialized, light and dark themes, typing into an input with
 `gpui_kit::test::TestWindowExt`, and keyboard navigation in a list and a menu.
 
@@ -97,11 +98,11 @@ against its hash. Cargo's `--config 'env.NAME="value"'` sets the variables for t
 works wherever cargo's arguments get through:
 
 ```sh
-# On the remote machine, in an mhr_gpui_kit checkout, with standard output saved as run.log
+# On the remote machine, in a checkout of the GPUI Kit fork, with standard output saved as run.log
 cargo test -p gpui-kit --features test-support --test screenshots \
   --config 'env.UPDATE_GOLDENS="1"' --config 'env.PRINT_SCREENSHOTS="1"'
 # Locally, in this checkout
-script/screenshots-from-log -C ../mhr_gpui_kit run.log
+script/screenshots-from-log -C ../gpui_kit run.log
 ```
 
 ## Why every run gives the same pixels

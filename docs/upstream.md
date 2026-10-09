@@ -69,8 +69,8 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
 4. **Compare it with crates.io** from a checkout of `main`, against a worktree of `upstream`:
 
    ```sh
-   git worktree add --detach ../mhr_gpui-upstream upstream
-   script/verify-upstream.sh -C ../mhr_gpui-upstream
+   git worktree add --detach ../gpui-upstream upstream
+   script/verify-upstream.sh -C ../gpui-upstream
    ```
 
    The script packages each gpui-pre crate and compares it with the published one. Every crate
@@ -81,7 +81,7 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    back with `cargo metadata --format-version 1 > /dev/null`. Then:
    - fix `gpui-pre-mobile` where gpui's API moved: its gpui dependencies follow the workspace
      version on their own, and breaks show up in the checks in [mobile.md](mobile.md)
-   - run mhr_gpui_kit's tests against the new `main`
+   - run the GPUI Kit fork's tests against the new `main`
    - run `script/verify-upstream.sh` on `main` to list the crates the fork has changed. Crates
      that only use a changed crate show as differing "in Cargo.lock only".
 
