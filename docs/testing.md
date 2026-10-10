@@ -6,14 +6,18 @@
 - `cargo test -p gpui-pre-mobile` runs the mobile crate's unit tests.
 - `cargo test -p gpui-pre-screenshot` runs the screenshot harness's tests and its goldens of
   plain GPUI elements, on Linux.
+- CI runs clippy and the tests of every crate whose tests build, on Linux, Windows and macOS.
+  [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) has the commands and the crates it
+  leaves out.
 - The suite of the [GPUI Kit fork](https://github.com/mesa-hills-research/gpui_kit), about 2,650
   tests, exercises the gpui crates through GPUI Kit. Run it from a checkout of the kit whose
   `[patch.crates-io]` points at this one.
 
-The gpui crates' own tests, examples and benchmarks don't build here. The release tooling leaves
-out their `[dev-dependencies]`, and several read fonts from Zed's `assets/` folder, which the
-snapshot doesn't include. Running them would mean restoring both, which is future work. Until
-then, a change to gpui itself can be tested in a Zed checkout at the snapshot's revision.
+The tests of `gpui-pre` and six other gpui crates, and the gpui crates' examples and benchmarks,
+don't build here. The release tooling leaves out their `[dev-dependencies]`, and several read
+fonts from Zed's `assets/` folder, which the snapshot doesn't include. Running them would mean
+restoring both, which is future work. Until then, a change to gpui itself can be tested in a Zed
+checkout at the snapshot's revision.
 
 ## Headless screenshots on Linux
 

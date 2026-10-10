@@ -129,3 +129,4 @@ Skip upstream's "Bump gpui-pre" commits, since the workspace sets that version.
 Format only the files you change, with `cargo fmt -p gpui-pre-mobile` or `rustfmt <file>`.
 `cargo fmt --all` would reformat code that the release tooling generates, such as
 `crates/gpui_macros/src/gpui_pre_facade_paths.rs`, and every later import would conflict with it.
+CI checks the formatting of every crate except `gpui-pre-macros`.
