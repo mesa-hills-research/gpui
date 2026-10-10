@@ -108,6 +108,9 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
   process's AppUserModelID when it has one. A jump list whose recent entries Windows declines,
   because the user turned off recent items, keeps its tasks. `gpui-pre-apple`'s copy of
   `platform.rs` under `vendor/gpui` follows the original.
+- **The golden ratio**, in `gpui-pre`'s `src/geometry.rs`. `phi()` returns
+  `f32::consts::GOLDEN_RATIO` in place of the literal `1.618_034`, which is the same `f32` and
+  which the clippy of Rust 1.99 rejects. `gpui-pre-apple`'s copy under `vendor/gpui` follows it.
 
 ## The mobile crate
 
