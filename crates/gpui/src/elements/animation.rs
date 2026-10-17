@@ -63,9 +63,14 @@ impl Animation {
     }
 
     /// Limit how often this animation re-renders. Instead of re-rendering on
-    /// every frame, the animation schedules its next render `1 / max_fps`
-    /// seconds after the current one. Values that are not finite and positive
-    /// are ignored.
+    /// every frame, the animation schedules its next render at most
+    /// `1 / max_fps` seconds after the current one. Values that are not
+    /// finite and positive are ignored.
+    ///
+    /// The renders fall on a grid of `1 / max_fps` seconds shared by the
+    /// whole [`App`], so the throttled animations of a window render in the
+    /// same frames, however many there are and whenever each started: two
+    /// spinners capped at 30 fps draw 30 frames a second, not 60.
     pub fn with_max_fps(mut self, max_fps: f32) -> Self {
         self.max_fps = Some(max_fps);
         self
@@ -453,16 +458,47 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                     Some(max_fps) if max_fps.is_finite() && max_fps > 0.0 => {
                         if !state.delayed_frame_pending.get() {
                             state.delayed_frame_pending.set(true);
-                            let delayed_frame_pending = state.delayed_frame_pending.clone();
-                            let view = window.current_view();
+                            // The next point of a grid of `interval` from the
+                            // app's synced epoch, shared by the throttled
+                            // animations of the window: one timer wakes them all.
                             let interval = Duration::from_secs_f32(1.0 / max_fps);
-                            window
-                                .spawn(cx, async move |cx| {
-                                    cx.background_executor().timer(interval).await;
-                                    delayed_frame_pending.set(false);
-                                    cx.update(move |_, cx| cx.notify(view)).ok();
-                                })
-                                .detach();
+                            let interval_nanos = (interval.as_nanos() as u64).max(1);
+                            let since_epoch = cx
+                                .background_executor()
+                                .now()
+                                .saturating_duration_since(cx.synced_animation_epoch)
+                                .as_nanos() as u64;
+                            let point = since_epoch / interval_nanos + 1;
+                            let delay = Duration::from_nanos(point * interval_nanos - since_epoch);
+                            let waiting =
+                                (window.current_view(), state.delayed_frame_pending.clone());
+                            let frames = window.throttled_animation_frames.clone();
+                            let mut pending = frames.borrow_mut();
+                            match pending.entry((interval_nanos, point)) {
+                                std::collections::hash_map::Entry::Occupied(mut views) => {
+                                    views.get_mut().push(waiting);
+                                }
+                                std::collections::hash_map::Entry::Vacant(entry) => {
+                                    entry.insert(vec![waiting]);
+                                    drop(pending);
+                                    window
+                                        .spawn(cx, async move |cx| {
+                                            cx.background_executor().timer(delay).await;
+                                            let views = frames
+                                                .borrow_mut()
+                                                .remove(&(interval_nanos, point))
+                                                .unwrap_or_default();
+                                            cx.update(move |_, cx| {
+                                                for (view, pending) in views {
+                                                    pending.set(false);
+                                                    cx.notify(view);
+                                                }
+                                            })
+                                            .ok();
+                                        })
+                                        .detach();
+                                }
+                            }
                         }
                     }
                     _ => window.request_animation_frame(),
@@ -960,6 +996,61 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(105));
         cx.run_until_parked();
         assert_deltas_approx_eq(&[0.0, 0.105, 0.21]);
+    }
+
+    /// Throttled animations started at different times, as indicators
+    /// mounted one after the other.
+    struct StaggeredThrottledView {
+        shown: usize,
+        renders: Rc<RefCell<usize>>,
+    }
+
+    impl Render for StaggeredThrottledView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            *self.renders.borrow_mut() += 1;
+            div().size_full().children((0..self.shown).map(|ix| {
+                div().with_animation(
+                    ("throttled", ix),
+                    Animation::new(Duration::from_secs(1))
+                        .repeat()
+                        .with_max_fps(30.0),
+                    |this, _| this,
+                )
+            }))
+        }
+    }
+
+    #[gpui::test]
+    fn test_throttled_animations_render_in_the_same_frames(cx: &mut TestAppContext) {
+        let renders = Rc::new(RefCell::new(0));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let renders = renders.clone();
+            move |_, _| StaggeredThrottledView { shown: 1, renders }
+        });
+        cx.run_until_parked();
+        // Three animations, mounted 15 ms and 10 ms apart.
+        for _ in 0..2 {
+            cx.executor().advance_clock(Duration::from_millis(15));
+            cx.run_until_parked();
+            window
+                .update(cx, |view, _, cx| {
+                    view.shown += 1;
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        *renders.borrow_mut() = 0;
+        for _ in 0..1000 {
+            cx.executor().advance_clock(Duration::from_millis(1));
+            cx.run_until_parked();
+        }
+        let renders = *renders.borrow();
+        assert!(
+            (29..=31).contains(&renders),
+            "{renders} renders in a second for three animations capped at 30 fps"
+        );
     }
 
     #[gpui::test]
