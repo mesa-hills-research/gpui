@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = { workspace = true }
 publish = true
 license = "Apache-2.0"
-description = "Zed's `http_client_tls` crate (gpui-pre snapshot of zed@279fe07)"
-repository = "https://github.com/zed-industries/zed"
+description = "The rustls client configuration of mhr-reqwest-client, for mhr-gpui, a fork of Zed's gpui"
+repository = { workspace = true }
+rust-version = { workspace = true }
+readme = "README.md"
+keywords = ["gpui", "tls", "rustls"]
+categories = ["web-programming::http-client", "cryptography"]
 
 [package.metadata.gpui-pre]
 zed-crate = "http_client_tls"

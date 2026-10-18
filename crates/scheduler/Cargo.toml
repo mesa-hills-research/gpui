@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = { workspace = true }
 publish = true
 license = "Apache-2.0"
-description = "Zed's `scheduler` crate (gpui-pre snapshot of zed@279fe07)"
-repository = "https://github.com/zed-industries/zed"
+description = "The task scheduler and executors of mhr-gpui, a fork of Zed's gpui"
+repository = { workspace = true }
+rust-version = { workspace = true }
+readme = "README.md"
+keywords = ["gpui", "executor", "async", "scheduler"]
+categories = ["asynchronous", "concurrency"]
 
 [package.metadata.gpui-pre]
 zed-crate = "scheduler"

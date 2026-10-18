@@ -3,14 +3,15 @@ name = "mhr-gpui"
 version = "0.1.0"
 edition = { workspace = true }
 authors = ["Nathan Sobo <nathan@zed.dev>"]
-description = "Zed's GPU-accelerated UI framework (gpui-pre snapshot of zed@279fe07)"
-repository = "https://github.com/zed-industries/zed"
 publish = true
 license = "Apache-2.0"
-homepage = "https://gpui.rs"
+description = "A GPU-accelerated UI framework for Rust, a fork of Zed's gpui"
+repository = { workspace = true }
+rust-version = { workspace = true }
 readme = "README.md"
-keywords = ["desktop", "gui", "immediate"]
-categories = ["gui"]
+keywords = ["gui", "ui", "gpu", "desktop", "zed"]
+categories = ["gui", "rendering"]
+exclude = ["examples/image/black-cat-typing.gif"]
 
 [package.metadata.cargo-shear]
 ignored = ["bindgen", "font-kit", "getrandom", "objc2", "objc2-metal"]

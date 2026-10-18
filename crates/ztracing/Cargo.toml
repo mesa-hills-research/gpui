@@ -4,8 +4,12 @@ version = "0.1.0"
 edition = { workspace = true }
 publish = true
 license = "Apache-2.0"
-description = "Zed's `ztracing` crate (gpui-pre snapshot of zed@279fe07)"
-repository = "https://github.com/zed-industries/zed"
+description = "Tracing spans that compile away unless enabled, used by mhr-gpui, a fork of Zed's gpui"
+repository = { workspace = true }
+rust-version = { workspace = true }
+readme = "README.md"
+keywords = ["gpui", "tracing", "tracy"]
+categories = ["development-tools::profiling"]
 
 [package.metadata.gpui-pre]
 zed-crate = "ztracing"

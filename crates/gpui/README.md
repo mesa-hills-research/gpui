@@ -3,13 +3,18 @@
 GPUI is a hybrid immediate and retained mode, GPU accelerated, UI framework
 for Rust, designed to support a wide variety of applications.
 
+`mhr-gpui` is Mesa Hills Research's fork of the GPUI of the [Zed](https://zed.dev) editor,
+published from [mesa-hills-research/gpui](https://github.com/mesa-hills-research/gpui), whose
+README lists what the fork changes. Its crates keep GPUI's library names, so code still imports
+`gpui` and `gpui_platform`.
+
 ## Getting Started
 
-GPUI is still in active development as we work on the Zed code editor, and is still pre-1.0. There will often be breaking changes between versions. You'll also need to use the latest version of stable Rust. Add `gpui`, and optionally `gpui_platform`, to your `Cargo.toml`:
+GPUI is still in active development as Zed's developers work on the Zed code editor, and is still pre-1.0. There will often be breaking changes between versions. You'll also need to use the latest version of stable Rust. Add `gpui`, and optionally `gpui_platform`, to your `Cargo.toml`:
 
 ```toml
-gpui = { version = "*" }
-gpui_platform = { version = "*", features = ["font-kit", "wayland", "x11"] }
+gpui = { package = "mhr-gpui", version = "0.1" }
+gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["font-kit", "wayland", "x11"] }
 ```
 
 Everything in a standalone GPUI app starts with an `Application`. You can create one with `gpui_platform::application()`, which picks the windowing and text backends for the host OS, and kick off your application by passing a callback to `Application::run()`. Inside this callback, you can create a new window with `App::open_window()` and register your first root view.
@@ -31,13 +36,13 @@ The features on `gpui_platform` are platform-specific, so the list above is a sa
 - **macOS** — Rendering uses Metal and is always available, but glyph rasterization needs `font-kit`. Without it, GPUI falls back to a placeholder text system that lays text out but renders no glyphs.
 
     ```toml
-    gpui_platform = { version = "*", features = ["font-kit"] }
+    gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["font-kit"] }
     ```
 
 - **Linux / FreeBSD** — enable at least one windowing backend for desktop windows: `wayland`, `x11`, or both. These features also compile the renderer and text system, so no separate text feature is needed.
 
     ```toml
-    gpui_platform = { version = "*", features = ["wayland", "x11"] }
+    gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["wayland", "x11"] }
     ```
 
 - **Windows** — no features are required. Windowing uses Win32 and text uses DirectWrite. `font-kit` has no effect here.

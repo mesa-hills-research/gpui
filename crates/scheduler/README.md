@@ -1,0 +1,15 @@
+# mhr-scheduler
+
+GPUI's task scheduler and executors, from Zed's `scheduler` crate.
+
+It's part of [mhr-gpui](https://crates.io/crates/mhr-gpui), Mesa Hills Research's fork of
+[GPUI](https://www.gpui.rs), the GPU-accelerated UI framework of the [Zed](https://zed.dev) editor.
+
+Apps get it through `mhr-gpui`. To depend on it directly, keep its library name `scheduler`:
+
+```toml
+[dependencies]
+scheduler = { package = "mhr-scheduler", version = "0.1" }
+```
+
+The source is in [mesa-hills-research/gpui](https://github.com/mesa-hills-research/gpui). Apache-2.0, like Zed's gpui.

@@ -33,6 +33,8 @@ members = [
 [workspace.package]
 publish = true
 edition = "2024"
+repository = "https://github.com/mesa-hills-research/gpui"
+rust-version = "1.95"
 
 [workspace.dependencies]
 bench_metrics = { path = "crates/bench_metrics", package = "mhr-bench-metrics", version = "=0.1.0" }
