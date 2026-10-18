@@ -1162,6 +1162,12 @@ enum InputModality {
     Touch,
 }
 
+/// See [`Window::throttled_animation_frames`]: by the interval in nanoseconds
+/// and the grid point, the views to notify and the flags that say a render
+/// is pending for their animations.
+pub(crate) type ThrottledAnimationFrames =
+    Rc<RefCell<FxHashMap<(u64, u64), Vec<(EntityId, Rc<Cell<bool>>)>>>>;
+
 /// Holds the state for a specific window.
 pub struct Window {
     pub(crate) handle: AnyWindowHandle,
@@ -1202,6 +1208,10 @@ pub struct Window {
     pub(crate) next_tooltip_id: TooltipId,
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     pub(crate) next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
+    /// The renders throttled animations wait for (see
+    /// [`crate::Animation::with_max_fps`]): for an interval and a point of
+    /// its grid, the views to notify then.
+    pub(crate) throttled_animation_frames: ThrottledAnimationFrames,
     pub(crate) dirty_views: FxHashSet<EntityId>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     pub(crate) focus_lost_listeners: SubscriberSet<(), AnyObserver>,
@@ -2090,6 +2100,7 @@ impl Window {
             rendered_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame: Frame::new(DispatchTree::new(cx.keymap.clone(), cx.actions.clone())),
             next_frame_callbacks,
+            throttled_animation_frames: Default::default(),
             next_hitbox_id: HitboxId(0),
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
