@@ -1,8 +1,8 @@
 # Mobile
 
-`crates/gpui_mobile` is `gpui-pre-mobile`, GPUI's platform for iOS and Android: the window,
-input, text system, dispatcher and display for each, the `packages` modules (camera, location,
-notifications and others) and an example app. It comes from
+`crates/gpui_mobile` is `mhr-gpui-mobile`, GPUI's platform for iOS and Android. It has the
+window, input, text system, dispatcher and display for each, the `packages` modules (camera,
+location, notifications and others) and an example app. It comes from
 [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile), GPUI Kit's fork of
 [itsbalamurali/gpui-mobile](https://github.com/itsbalamurali/gpui-mobile).
 
@@ -21,11 +21,12 @@ Android was validated for one AI chat screen.
 
 On gpui-pre 0.3.8:
 
-- `cargo check -p gpui-pre-mobile --all-targets --target <target>` passes for
+- `cargo check -p mhr-gpui-mobile --all-targets --target <target>` passes for
   `aarch64-linux-android`, `x86_64-linux-android`, `aarch64-apple-ios` and
   `aarch64-apple-ios-sim`. The unit tests pass on Linux. Two doctests are snippets without imports
   and fail to compile, as upstream's do.
-- The example app's `.so` builds and links with NDK r29 for both Android targets.
+- Up to commit `f98b12a`, the example app's `.so` built and linked with NDK r29 for both
+  Android targets. It builds again once GPUI Kit builds on the `mhr-` crates (see below).
 - On Linux the example fails to type-check for iOS: `ring` and `aws-lc-sys` compile C with the iOS
   SDK, and `backtrace` hits the libc break below.
 
@@ -55,8 +56,10 @@ An APK takes `example/build.sh android`, which also needs cargo-ndk, the Android
 The crate's [README](../crates/gpui_mobile/README.md) has the details.
 
 The example is a workspace of its own, so it keeps its release profile. It uses GPUI Kit 0.7.1
-from crates.io, and a `[patch.crates-io]` in its manifest points the gpui crates at this
-workspace.
+from crates.io, which builds on the `gpui-pre` crates. Up to commit `f98b12a`, a
+`[patch.crates-io]` in the example's manifest pointed those at this workspace. A patch can't
+rename a crate, so with the `mhr-` names the example needs a GPUI Kit built on them, and until
+then it builds from that commit.
 
 ## iOS
 

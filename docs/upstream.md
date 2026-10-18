@@ -26,10 +26,11 @@ every Monday and by hand. For 0.3.8 the script:
 
 The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and Bun 1.4.2.
 
-1. **Find the revisions.** Each crate's description ends with the Zed revision, for example
-   "(gpui-pre snapshot of zed@279fe07)", and `[package.metadata.gpui-pre]` in its `Cargo.toml`
-   has it in full. The script version is the head commit of the "Release GPUI" run that
-   published the release, and that run's log shows the Bun version and the staging output:
+1. **Find the revisions.** Each gpui-pre crate's description on crates.io ends with the Zed
+   revision, for example "(gpui-pre snapshot of zed@279fe07)", and `[package.metadata.gpui-pre]`
+   in its `Cargo.toml` has it in full. The script version is the head commit of the "Release
+   GPUI" run that published the release, and that run's log shows the Bun version and the
+   staging output:
 
    ```sh
    gh api 'repos/longbridge/gpui-kit/actions/workflows/release-gpui.yml/runs?per_page=10' \
@@ -77,14 +78,40 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
    should match.
 
 5. **Merge into `main`** with `git merge upstream`. Conflicts mark lines the fork changed too,
-   listed in [Changes to the gpui crates](#changes-to-the-gpui-crates).
-   If `Cargo.lock` conflicts, take upstream's and let cargo add `gpui-pre-mobile`'s dependencies
-   back with `cargo metadata --format-version 1 > /dev/null`. Then:
-   - fix `gpui-pre-mobile` where gpui's API moved: its gpui dependencies follow the workspace
-     version on their own, and breaks show up in the checks in [mobile.md](mobile.md)
+   listed in [Changes to the gpui crates](#changes-to-the-gpui-crates) and
+   [The fork's names](#the-forks-names). In each `Cargo.toml`, keep `main`'s package name,
+   version and crates.io metadata, and take upstream's dependencies and features. If
+   `Cargo.lock` conflicts, take upstream's and let cargo rename the crates and add
+   `mhr-gpui-mobile`'s dependencies back with `cargo metadata --format-version 1 > /dev/null`.
+   Then:
+   - fix `mhr-gpui-mobile` where gpui's API moved. Its gpui dependencies follow the workspace
+     version on their own, and breaks show up in the checks in [mobile.md](mobile.md).
    - run the GPUI Kit fork's tests against the new `main`
-   - run `script/verify-upstream.sh` on `main` to list the crates the fork has changed. Crates
-     that only use a changed crate show as differing "in Cargo.lock only".
+   - list the files the fork has changed with `git diff --stat upstream main -- crates tooling`
+
+## The fork's names
+
+The crates are published as `mhr-` followed by their library names, at versions of their own
+starting from 0.1.0, because the `gpui-pre` names belong to GPUI Kit on crates.io. Each crate's
+`Cargo.toml` has its own name, version, description, repository, keywords, categories and README,
+and the workspace sets `rust-version` and pins the crates to each other with `=`.
+`[package.metadata.gpui-pre]` keeps the Zed crate and revision each one comes from.
+
+## Publishing
+
+The published crates share one version, set in each crate's `Cargo.toml` and in the `=` pins of
+`[workspace.dependencies]`, so a release bumps all of them together. Then:
+
+```sh
+packages=$(cargo metadata --no-deps --format-version 1 \
+  | jq -j '.packages[] | select(.publish != []) | "-p \(.name) "')
+cargo publish --dry-run --locked $packages
+cargo publish --locked $packages
+```
+
+Cargo packages the crates, builds each package against the others, and uploads them in
+dependency order. crates.io takes new versions of existing crates quickly, but it limits how fast
+one account creates new crates, so a release that adds a crate may have to wait and retry.
 
 ## Changes to the gpui crates
 
@@ -92,7 +119,7 @@ Each of upstream's files that these changes touch starts with a line saying Mesa
 modified it, as the Apache License asks of modified files. A change to another of upstream's files
 adds the same line.
 
-- **Variable font weights**, in `gpui-pre-wgpu`'s `src/cosmic_text_system.rs`, the text system
+- **Variable font weights**, in `mhr-gpui-wgpu`'s `src/cosmic_text_system.rs`, the text system
   of Linux and Android. It chose a face for the requested weight and then drew every weight of a
   variable face at the face's default, so Bold in a variable font such as Ubuntu Sans Mono came out
   Regular. Each weight of a variable face now gets its own `FontId`, shaped and rasterized at that
@@ -100,28 +127,35 @@ adds the same line.
   `slnt`, `wdth`) stay at their defaults, since cosmic-text shapes along `wght` alone.
   `crates/gpui_screenshot/tests/variable_fonts.rs` covers it. Zed's gpui has the same bug, which
   hasn't been reported upstream yet.
-- **Screenshot test support** in `gpui-pre` and `gpui-pre-wgpu`, behind their `test-support`
+- **Screenshot test support** in `mhr-gpui` and `mhr-gpui-wgpu`, behind their `test-support`
   feature. [screenshots.md](screenshots.md#changes-to-the-gpui-crates) has the details.
-- **Recent files in Windows jump lists**, in `gpui-pre`'s `src/platform.rs` and `src/app.rs` and
-  `gpui-pre-windows`' `src/destination_list.rs` and `src/platform.rs`. Zed lists folders, so
+- **Recent files in Windows jump lists**, in `mhr-gpui`'s `src/platform.rs` and `src/app.rs` and
+  `mhr-gpui-windows`' `src/destination_list.rs` and `src/platform.rs`. Zed lists folders, so
   `App::update_jump_list` titles the recent entries "Recent Folders" with a folder icon beside
   each, and it still does. `App::update_jump_list_with` takes a `JumpListRecent` that names the
   title, the icon (a folder, the app's own, or one from a file) and whether to add Windows' own
   Recent category below it. `Platform::update_jump_list` takes the `JumpListRecent`.
   `App::add_recent_document` now works on Windows too, through `SHAddToRecentDocs` with the
   process's AppUserModelID when it has one. A jump list whose recent entries Windows declines,
-  because the user turned off recent items, keeps its tasks. `gpui-pre-apple`'s copy of
+  because the user turned off recent items, keeps its tasks. `mhr-gpui-apple`'s copy of
   `platform.rs` under `vendor/gpui` follows the original.
-- **The golden ratio**, in `gpui-pre`'s `src/geometry.rs`. `phi()` returns
+- **The golden ratio**, in `mhr-gpui`'s `src/geometry.rs`. `phi()` returns
   `f32::consts::GOLDEN_RATIO` in place of the literal `1.618_034`, which is the same `f32` and
-  which the clippy of Rust 1.99 rejects. `gpui-pre-apple`'s copy under `vendor/gpui` follows it.
-- **Zed's forks from crates.io.** Zed's manifests name its forks of font-kit, xim, scap and
-  wasm_thread by git revision beside a crates.io version, and a published crate gets the
-  crates.io release. This workspace names only the crates.io releases, so its builds and tests
-  use what the published crates get. font-kit, xim and scap have the same sources as the
-  revisions. In wasm_thread 0.3.3 the web workers start wasm-bindgen with positional arguments,
-  which wasm-bindgen still accepts with a deprecation warning in the console. A merge from
-  `upstream` brings the git revisions back where upstream changed those lines.
+  which the clippy of Rust 1.99 rejects. `mhr-gpui-apple`'s copy under `vendor/gpui` follows it.
+- **Zed's forks from crates.io**, in the workspace's `Cargo.toml` and those of `mhr-gpui` and
+  five sibling crates. Zed's manifests name its forks of font-kit, xim, scap and wasm_thread by
+  git revision beside a crates.io version, and a published crate gets the crates.io release. This
+  workspace names only the crates.io releases, so its builds and tests use what the published
+  crates get. font-kit, xim and scap have the same sources as the revisions. In wasm_thread 0.3.3
+  the web workers start wasm-bindgen with positional arguments, which wasm-bindgen still accepts
+  with a deprecation warning in the console. A merge from `upstream` brings the git revisions back
+  where upstream changed those lines.
+- **Throttled animations share frames**, in `mhr-gpui`'s `src/elements/animation.rs` and
+  `src/window.rs`. `Animation::with_max_fps` scheduled each animation's next render on a timer of
+  its own, so animations started at different times drew in different frames, and two spinners
+  capped at 30 fps drew 60 frames a second. Renders now fall on a grid of `1 / max_fps` from the
+  app's animation epoch, and the throttled animations of a window that wait for the same point of
+  the grid share one timer. `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui` follows it.
 
 ## The mobile crate
 
@@ -137,7 +171,7 @@ Skip upstream's "Bump gpui-pre" commits, since the workspace sets that version.
 
 ## Formatting
 
-Format only the files you change, with `cargo fmt -p gpui-pre-mobile` or `rustfmt <file>`.
+Format only the files you change, with `cargo fmt -p mhr-gpui-mobile` or `rustfmt <file>`.
 `cargo fmt --all` would reformat code that the release tooling generates, such as
 `crates/gpui_macros/src/gpui_pre_facade_paths.rs`, and every later import would conflict with it.
-CI checks the formatting of every crate except `gpui-pre-macros`.
+CI checks the formatting of every crate except `mhr-gpui-macros`.

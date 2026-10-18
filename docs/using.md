@@ -1,93 +1,85 @@
 # Using the fork
 
-Every crate here keeps the crates.io package name, version and library name of the crate it
-replaces, so a `[patch.crates-io]` in the app's root `Cargo.toml` switches an app to the fork.
-Cargo applies only the root workspace's patches, so an app that uses the
-[GPUI Kit fork](https://github.com/mesa-hills-research/gpui_kit) patches the gpui crates itself too.
+The crates are on crates.io under `mhr-` names. Each keeps its library name, so a dependency
+named after the library imports as usual:
 
-## The patch
+```toml
+[dependencies]
+gpui = { package = "mhr-gpui", version = "0.1" }
+gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["font-kit", "wayland", "x11"] }
+# For HTTP, through `App::set_http_client`
+reqwest_client = { package = "mhr-reqwest-client", version = "0.1" }
+```
 
-Patch every `gpui-pre-*` crate the app's `Cargo.lock` lists, so none of them is left on
-crates.io beside its replacement. `gpui-pre-reqwest` is the exception: GPUI Kit publishes it on
-its own, and it stays on crates.io.
+The crates of one release pin each other exactly, so an app always gets one consistent set.
+`gpui_platform` needs `font-kit` on macOS to draw text and `wayland`, `x11` or both on Linux.
+Windows and the web need no features.
+
+## Moving from gpui-pre
+
+Swap each `gpui-pre` crate for its `mhr-` package and keep the dependency's name, for example
+`gpui = { package = "gpui-pre", version = "=0.3.8" }` becomes
+`gpui = { package = "mhr-gpui", version = "0.1" }`. Code needs no changes.
+
+An app can't use both sets, since each has its own `gpui` types. Every `gpui-pre` crate leaves the
+app's `Cargo.lock`, including those that other dependencies bring in, such as GPUI Kit from
+crates.io, which builds on the `gpui-pre` crates. `cargo tree -i gpui-pre` should then find
+nothing, and `cargo tree -i mhr-gpui` should show one `mhr-gpui`. `gpui-pre-reqwest`, GPUI Kit's
+build of reqwest, stays, since `mhr-reqwest-client` uses it too.
+
+| Package | Replaces | Directory |
+|---|---|---|
+| `mhr-gpui` | `gpui-pre` | `crates/gpui` |
+| `mhr-gpui-apple` | `gpui-pre-apple` | `crates/gpui_apple` |
+| `mhr-bench-metrics` | `gpui-pre-bench-metrics` | `crates/bench_metrics` |
+| `mhr-collections` | `gpui-pre-collections` | `crates/collections` |
+| `mhr-derive-refineable` | `gpui-pre-derive-refineable` | `crates/refineable/derive_refineable` |
+| `mhr-http-client` | `gpui-pre-http-client` | `crates/http_client` |
+| `mhr-http-client-tls` | `gpui-pre-http-client-tls` | `crates/http_client_tls` |
+| `mhr-gpui-linux` | `gpui-pre-linux` | `crates/gpui_linux` |
+| `mhr-gpui-macos` | `gpui-pre-macos` | `crates/gpui_macos` |
+| `mhr-gpui-macros` | `gpui-pre-macros` | `crates/gpui_macros` |
+| `mhr-perf` | `gpui-pre-perf` | `tooling/perf` |
+| `mhr-gpui-platform` | `gpui-pre-platform` | `crates/gpui_platform` |
+| `mhr-refineable` | `gpui-pre-refineable` | `crates/refineable` |
+| `mhr-reqwest-client` | `gpui-pre-reqwest-client` | `crates/reqwest_client` |
+| `mhr-scheduler` | `gpui-pre-scheduler` | `crates/scheduler` |
+| `mhr-gpui-shared-string` | `gpui-pre-shared-string` | `crates/gpui_shared_string` |
+| `mhr-sum-tree` | `gpui-pre-sum-tree` | `crates/sum_tree` |
+| `mhr-gpui-util` | `gpui-pre-util` | `crates/gpui_util` |
+| `mhr-util-macros` | `gpui-pre-util-macros` | `crates/util_macros` |
+| `mhr-gpui-web` | `gpui-pre-web` | `crates/gpui_web` |
+| `mhr-gpui-wgpu` | `gpui-pre-wgpu` | `crates/gpui_wgpu` |
+| `mhr-gpui-windows` | `gpui-pre-windows` | `crates/gpui_windows` |
+| `mhr-zlog` | `gpui-pre-zlog` | `crates/zlog` |
+| `mhr-ztracing` | `gpui-pre-ztracing` | `crates/ztracing` |
+| `mhr-ztracing-macro` | `gpui-pre-ztracing-macro` | `crates/ztracing_macro` |
+
+`mhr-gpui-mobile` (`crates/gpui_mobile`) and `mhr-gpui-screenshot` (`crates/gpui_screenshot`)
+are unpublished, so an app takes them from git.
+
+## From git or a local checkout
+
+A git dependency names the package and a commit:
+
+```toml
+gpui = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>", package = "mhr-gpui" }
+```
+
+For changes in progress, a `[patch.crates-io]` in the app's root `Cargo.toml` points the published
+crates at a checkout. Patch every `mhr-` crate in the app's `Cargo.lock`, so none of them stays on
+crates.io beside its replacement:
 
 ```toml
 [patch.crates-io]
-gpui-pre                   = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-apple             = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-bench-metrics     = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-collections       = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-derive-refineable = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-http-client       = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-http-client-tls   = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-linux             = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-macos             = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-macros            = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-mobile            = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-perf              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-platform          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-refineable        = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-reqwest-client    = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-scheduler         = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-shared-string     = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-sum-tree          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-util              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-util-macros       = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-web               = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-wgpu              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-windows           = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-zlog              = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-ztracing          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-ztracing-macro    = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
+mhr-gpui          = { path = "../gpui/crates/gpui" }
+mhr-gpui-platform = { path = "../gpui/crates/gpui_platform" }
+mhr-gpui-macros   = { path = "../gpui/crates/gpui_macros" }
+# ...one entry for every mhr- crate in Cargo.lock, with the directories above
 ```
-
-Cargo warns about entries the app's graph doesn't use, such as `gpui-pre-mobile` in a desktop app.
-Delete those.
-
-Then `cargo update -p gpui-pre` (or any cargo command without `--locked`) moves the lock file onto
-the patch. `cargo tree -i gpui-pre` should show one `gpui-pre` and it should come from
-`github.com/mesa-hills-research/gpui`.
-
-## Working against a local checkout
-
-For changes in progress, point the entries at a checkout instead, for example
-`gpui-pre = { path = "../gpui/crates/gpui" }`. The crates' directories:
-
-| Package | Directory |
-|---|---|
-| `gpui-pre` | `crates/gpui` |
-| `gpui-pre-apple` | `crates/gpui_apple` |
-| `gpui-pre-bench-metrics` | `crates/bench_metrics` |
-| `gpui-pre-collections` | `crates/collections` |
-| `gpui-pre-derive-refineable` | `crates/refineable/derive_refineable` |
-| `gpui-pre-http-client` | `crates/http_client` |
-| `gpui-pre-http-client-tls` | `crates/http_client_tls` |
-| `gpui-pre-linux` | `crates/gpui_linux` |
-| `gpui-pre-macos` | `crates/gpui_macos` |
-| `gpui-pre-macros` | `crates/gpui_macros` |
-| `gpui-pre-mobile` | `crates/gpui_mobile` |
-| `gpui-pre-perf` | `tooling/perf` |
-| `gpui-pre-platform` | `crates/gpui_platform` |
-| `gpui-pre-refineable` | `crates/refineable` |
-| `gpui-pre-reqwest-client` | `crates/reqwest_client` |
-| `gpui-pre-scheduler` | `crates/scheduler` |
-| `gpui-pre-shared-string` | `crates/gpui_shared_string` |
-| `gpui-pre-sum-tree` | `crates/sum_tree` |
-| `gpui-pre-util` | `crates/gpui_util` |
-| `gpui-pre-util-macros` | `crates/util_macros` |
-| `gpui-pre-web` | `crates/gpui_web` |
-| `gpui-pre-wgpu` | `crates/gpui_wgpu` |
-| `gpui-pre-windows` | `crates/gpui_windows` |
-| `gpui-pre-zlog` | `crates/zlog` |
-| `gpui-pre-ztracing` | `crates/ztracing` |
-| `gpui-pre-ztracing-macro` | `crates/ztracing_macro` |
 
 Cargo caps lints for git and registry dependencies, and treats path dependencies as the app's own
 code. With `RUSTFLAGS="-D warnings"`, which `actions-rust-lang/setup-rust-toolchain` sets by
-default and GPUI Kit's CI uses, gpui's own warnings then fail the build. With rustc 1.99 there are three: gpui's profiler calls
-`Atomic*::fetch_update`, which 1.99 deprecates in favour of `try_update`. Use git entries in CI.
-
-## What changes in the lock file
-
-Only the gpui crates change source. Their other dependencies come from crates.io, as in the
-published gpui-pre crates, including Zed's forks of font-kit, xim, scap and wasm_thread.
+default, gpui's own warnings then fail the build. Rust 1.99 warns three times about gpui's
+profiler, which calls `Atomic*::fetch_update` where 1.99 prefers `try_update`. Use crates.io or git
+entries in CI.

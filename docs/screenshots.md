@@ -1,6 +1,6 @@
 # Screenshot tests
 
-`gpui-pre-screenshot` (`crates/gpui_screenshot`, library `gpui_screenshot`) renders GPUI views
+`mhr-gpui-screenshot` (`crates/gpui_screenshot`, library `gpui_screenshot`) renders GPUI views
 headlessly on Linux and compares them with golden PNGs committed beside the tests. It catches
 what state assertions miss: an icon that stopped drawing, text the same color as its background,
 a border one pixel off.
@@ -165,8 +165,8 @@ The variable-font tests add Figtree 2.002 from
 
 The harness needs two additions, both behind the `test-support` feature:
 
-- `HeadlessAppContext::simulate_window_scale_factor_change` in `gpui-pre`, as
+- `HeadlessAppContext::simulate_window_scale_factor_change` in `mhr-gpui`, as
   `TestAppContext` already has, since headless windows open at scale 2
 - `WgpuHeadlessRenderer::new_software` and `WgpuHeadlessRenderer::adapter_info` in
-  `gpui-pre-wgpu`. The software renderer shares one device per process, like `new`, and keeps it
+  `mhr-gpui-wgpu`. The software renderer shares one device per process, like `new`, and keeps it
   apart from `new`'s.

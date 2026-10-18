@@ -1,53 +1,62 @@
 # gpui
 
 This repository is Mesa Hills Research's fork of [GPUI](https://www.gpui.rs), the GPU-accelerated
-UI framework of the [Zed](https://github.com/zed-industries/zed) editor, together with the
-`gpui-pre-mobile` platform for iOS and Android. GPUI fixes and the mobile work live here, next to
-each other, and [Mesa Hills Research's fork of GPUI Kit](https://github.com/mesa-hills-research/gpui_kit)
-builds on it.
+UI framework of the [Zed](https://github.com/zed-industries/zed) editor, together with a mobile
+platform for iOS and Android. GPUI fixes and the mobile work live here, next to each other, and
+[Mesa Hills Research's fork of GPUI Kit](https://github.com/mesa-hills-research/gpui_kit)
+builds on it. The crates are on crates.io as [`mhr-gpui`](https://crates.io/crates/mhr-gpui) and
+its siblings.
 
-It tracks the `gpui-pre` crates that GPUI Kit publishes: snapshots of Zed's gpui, cut by GPUI
-Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
+It follows the `gpui-pre` crates that GPUI Kit publishes, which are snapshots of Zed's gpui cut by
+GPUI Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
 [`279fe070`](https://github.com/zed-industries/zed/commit/279fe070bb389b79652e52065b2f001edcc0b11b)
 (2026-10-04), the snapshot GPUI Kit 0.7.1 is built against.
 
 | Crates | Source | State |
 |---|---|---|
-| `gpui-pre` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Unchanged, apart from [a few changes](docs/upstream.md#changes-to-the-gpui-crates): a fix for variable font weights on Linux and Android, recent files in Windows jump lists, and two test-support additions to `gpui-pre` and `gpui-pre-wgpu` for screenshot tests |
-| `gpui-pre-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental, see [Mobile](#mobile) |
-| `gpui-pre-screenshot` (`crates/gpui_screenshot`) | This fork | Golden-image tests for GPUI views, see [Screenshot tests](#screenshot-tests) |
+| `mhr-gpui` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Published. Unchanged apart from their names and [a few changes](docs/upstream.md#changes-to-the-gpui-crates), such as a fix for variable font weights on Linux and Android, recent files in Windows jump lists, throttled animations that share frames, and test support for screenshot tests |
+| `mhr-gpui-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental and unpublished, see [Mobile](#mobile) |
+| `mhr-gpui-screenshot` (`crates/gpui_screenshot`) | This fork | Golden-image tests for GPUI views, unpublished, see [Screenshot tests](#screenshot-tests) |
 
 ## Using it
 
-The crates keep their crates.io names, versions and library names, so an app (or GPUI Kit) moves
-to the fork with a `[patch.crates-io]` and no code changes:
+Each crate is published as `mhr-` followed by its library name, and keeps the library name, so code
+imports `gpui` and `gpui_platform` as usual:
 
 ```toml
-[patch.crates-io]
-gpui-pre          = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-platform = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-gpui-pre-mobile   = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>" }
-# ...one entry for every gpui-pre crate in the app's Cargo.lock
+[dependencies]
+gpui = { package = "mhr-gpui", version = "0.1" }
+gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["font-kit", "wayland", "x11"] }
 ```
 
-[docs/using.md](docs/using.md) has the full list and what changes in the lock file.
+```rust
+fn main() {
+    gpui_platform::application().run(|cx: &mut gpui::App| {
+        // Open windows here.
+    });
+}
+```
+
+An app on the `gpui-pre` crates moves over by swapping each one for its `mhr-` package under the
+same dependency name. [docs/using.md](docs/using.md) lists the packages and covers git and local
+checkouts.
 
 ## Following upstream
 
 Each gpui-pre release lands on the `upstream` branch as one commit holding the crates as GPUI
-Kit's tooling stages them for crates.io. `main` merges `upstream` and carries the fork's own
+Kit's tooling stages them for crates.io. `main` merges `upstream` and carries the fork's names and
 changes on top. [docs/upstream.md](docs/upstream.md) has the steps.
 
 ## Mobile
 
-`gpui-pre-mobile` implements GPUI's platform for iOS (Metal through wgpu, CoreText) and Android
-(Vulkan or GLES through wgpu, cosmic-text). Upstream calls it experimental: IME composition,
+`mhr-gpui-mobile` implements GPUI's platform for iOS (Metal through wgpu, CoreText) and Android
+(Vulkan or GLES through wgpu, cosmic-text). Upstream calls it experimental, since IME composition,
 accessibility and the app lifecycle are incomplete. Its gpui dependencies come from this
 workspace, so it always builds against the gpui beside it.
 
 | Target | State |
 |---|---|
-| Android (`aarch64-linux-android`, `x86_64-linux-android`) | Type-checks, and the example app's `.so` builds and links with NDK r29 |
+| Android (`aarch64-linux-android`, `x86_64-linux-android`) | Type-checks |
 | iOS (`aarch64-apple-ios`, `-sim`) | Type-checks on Linux. Linking and running need a Mac. |
 
 [docs/mobile.md](docs/mobile.md) covers building, the gaps and the open upstream work.
@@ -55,7 +64,7 @@ workspace, so it always builds against the gpui beside it.
 
 ## Screenshot tests
 
-`gpui-pre-screenshot` renders GPUI views headlessly on Linux, on Mesa's software Vulkan driver
+`mhr-gpui-screenshot` renders GPUI views headlessly on Linux, on Mesa's software Vulkan driver
 with bundled fonts, and compares them with golden PNGs. Android draws through the same renderer
 and text system, so the goldens cover its rendering and text too. GPUI Kit's buttons, inputs,
 list and menu have goldens in the GPUI Kit fork.
@@ -72,7 +81,7 @@ them on a remote machine and why the pixels repeat exactly.
 
 ## License
 
-The gpui crates are Apache-2.0, like Zed's gpui. Each carries `LICENSE-APACHE`, and the files the
-release tooling rewrites say so in their first line. `gpui-pre-mobile` keeps upstream's choice of
-GPL-3.0-or-later, AGPL-3.0-or-later or Apache-2.0. `LICENSE-GPL` at the root comes over from Zed's
-root with the release tooling and applies to none of the gpui crates.
+The gpui crates are Apache-2.0, like Zed's gpui. Each carries `LICENSE-APACHE`, and the files that
+the release tooling rewrites or this fork changes say so in their first line. `mhr-gpui-mobile`
+keeps upstream's choice of GPL-3.0-or-later, AGPL-3.0-or-later or Apache-2.0. `LICENSE-GPL` at the
+root comes over from Zed's root with the release tooling and applies to none of the gpui crates.

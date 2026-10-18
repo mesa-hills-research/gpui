@@ -3,8 +3,8 @@
 ## What runs here
 
 - `cargo check --workspace` covers every library.
-- `cargo test -p gpui-pre-mobile` runs the mobile crate's unit tests.
-- `cargo test -p gpui-pre-screenshot` runs the screenshot harness's tests and its goldens of
+- `cargo test -p mhr-gpui-mobile` runs the mobile crate's unit tests.
+- `cargo test -p mhr-gpui-screenshot` runs the screenshot harness's tests and its goldens of
   plain GPUI elements, on Linux.
 - CI runs clippy and the tests of every crate whose tests build, on Linux, Windows and macOS.
   [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) has the commands and the crates it
@@ -13,7 +13,7 @@
   tests, exercises the gpui crates through GPUI Kit. Run it from a checkout of the kit whose
   `[patch.crates-io]` points at this one.
 
-The tests of `gpui-pre` and six other gpui crates, and the gpui crates' examples and benchmarks,
+The tests of `mhr-gpui` and six other gpui crates, and the gpui crates' examples and benchmarks,
 don't build here. The release tooling leaves out their `[dev-dependencies]`, and several read
 fonts from Zed's `assets/` folder, which the snapshot doesn't include. Running them would mean
 restoring both, which is future work. Until then, a change to gpui itself can be tested in a Zed
@@ -27,7 +27,7 @@ GPUI's test platform can render windows for real and read the pixels back.
 macOS). It needs no GPU: Mesa's lavapipe, the CPU Vulkan driver in `mesa-vulkan-drivers`, is
 enough.
 
-With `gpui-pre`, `gpui-pre-platform` and `gpui-pre-wgpu` built with their `test-support` feature:
+With `mhr-gpui`, `mhr-gpui-platform` and `mhr-gpui-wgpu` built with their `test-support` feature:
 
 ```rust
 let text_system = Arc::new(gpui_wgpu::CosmicTextSystem::new("DejaVu Sans"));
@@ -49,6 +49,6 @@ This reaches further than desktop: Android draws through the same wgpu renderer 
 same cosmic-text system, so screenshot tests on Linux cover Android's rendering and text. They
 leave out its platform code: touch, IME, surfaces and the lifecycle.
 
-`gpui-pre-screenshot` builds golden-image tests on this, with bundled fonts and the software
+`mhr-gpui-screenshot` builds golden-image tests on this, with bundled fonts and the software
 adapter even where a GPU is present. [screenshots.md](screenshots.md) covers writing the tests and
 updating their goldens.
