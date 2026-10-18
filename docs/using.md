@@ -89,16 +89,5 @@ default and GPUI Kit's CI uses, gpui's own warnings then fail the build. With ru
 
 ## What changes in the lock file
 
-Besides the gpui crates themselves, four dependencies change source. Zed's manifests give them a
-git revision next to a crates.io version, and cargo builds a git or path dependency's
-dependencies from the revision, where the published gpui-pre crates use the crates.io release.
-
-| Dependency | From the revision | crates.io release | Difference |
-|---|---|---|---|
-| `zed-font-kit` 0.14.1-zed | `94b0f28` | from `1105231` | `dirs` 6 instead of 5 |
-| `zed-xim` 0.4.0-zed | `16f35a2` | from `471c10c` | Same tree. `xim-parser` 0.2.1 from the repository instead of 0.2.2. |
-| `zed-scap` 0.0.8-zed | `4afea48` | from `4afea48` | None |
-| `wasm_thread` 0.3.3 | `0cf96c7` | 0.3.3 | Used only on wasm |
-
-Inside this workspace, `gpui-pre-mobile` names the same `zed-font-kit` revision as
-`gpui-pre-wgpu`, so iOS builds get one font-kit.
+Only the gpui crates change source. Their other dependencies come from crates.io, as in the
+published gpui-pre crates, including Zed's forks of font-kit, xim, scap and wasm_thread.

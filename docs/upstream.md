@@ -111,6 +111,13 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
 - **The golden ratio**, in `gpui-pre`'s `src/geometry.rs`. `phi()` returns
   `f32::consts::GOLDEN_RATIO` in place of the literal `1.618_034`, which is the same `f32` and
   which the clippy of Rust 1.99 rejects. `gpui-pre-apple`'s copy under `vendor/gpui` follows it.
+- **Zed's forks from crates.io.** Zed's manifests name its forks of font-kit, xim, scap and
+  wasm_thread by git revision beside a crates.io version, and a published crate gets the
+  crates.io release. This workspace names only the crates.io releases, so its builds and tests
+  use what the published crates get. font-kit, xim and scap have the same sources as the
+  revisions. In wasm_thread 0.3.3 the web workers start wasm-bindgen with positional arguments,
+  which wasm-bindgen still accepts with a deprecation warning in the console. A merge from
+  `upstream` brings the git revisions back where upstream changed those lines.
 
 ## The mobile crate
 
