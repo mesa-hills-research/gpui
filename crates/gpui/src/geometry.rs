@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 //! The GPUI geometry module is a collection of types and traits that
 //! can be used to describe common units, concepts, and the relationships
 //! between them.

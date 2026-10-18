@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 //! Cross-platform headless app context for tests that need real text shaping.
 //!
 //! This replaces the macOS-only `HeadlessMetalAppContext` with a platform-neutral

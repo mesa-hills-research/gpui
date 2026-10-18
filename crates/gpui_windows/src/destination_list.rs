@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use std::{
     ffi::c_void,
     mem::ManuallyDrop,

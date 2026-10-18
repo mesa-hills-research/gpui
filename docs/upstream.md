@@ -88,6 +88,10 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
 
 ## Changes to the gpui crates
 
+Each of upstream's files that these changes touch starts with a line saying Mesa Hills Research
+modified it, as the Apache License asks of modified files. A change to another of upstream's files
+adds the same line.
+
 - **Variable font weights**, in `gpui-pre-wgpu`'s `src/cosmic_text_system.rs`, the text system
   of Linux and Android. It chose a face for the requested weight and then drew every weight of a
   variable face at the face's default, so Bold in a variable font such as Ubuntu Sans Mono came out

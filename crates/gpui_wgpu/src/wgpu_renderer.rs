@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{CompositorGpuHint, DeviceErrorState, WgpuAtlas, WgpuContext};
 use anyhow::{Context as _, Result};
 use bytemuck::{Pod, Zeroable};

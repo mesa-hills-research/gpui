@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use anyhow::{Context as _, Ok, Result};
 use collections::HashMap;
 use cosmic_text::{

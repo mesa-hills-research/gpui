@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 #[cfg(not(target_family = "wasm"))]
 use anyhow::Context as _;
 #[cfg(not(target_family = "wasm"))]
