@@ -156,6 +156,17 @@ adds the same line.
   capped at 30 fps drew 60 frames a second. Renders now fall on a grid of `1 / max_fps` from the
   app's animation epoch, and the throttled animations of a window that wait for the same point of
   the grid share one timer. `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui` follows it.
+- **List scrollbars that hold steady** over items not drawn yet, in `mhr-gpui`'s
+  `src/elements/list.rs`. `ListState` counted an item it hadn't measured as 0px tall, so the
+  scrollbar's range grew as the list drew items. While the reader scrolled, the thumb shrank and
+  jumped back, a dragged thumb slid away from the pointer, and a thumb dragged to the top stopped
+  short of the first item. An item not measured yet now counts its size hint, or else the mean
+  height of the items whose height is known, and an item replaced one for one, or invalidated by a
+  width change, keeps its old height as its estimate. The thumb moves with the list in proportion
+  to the distance left to the end it moves toward, so measured items change its speed instead of
+  its place, and both ends of the track are the ends of the list. A dragged thumb keeps its size
+  and stays under the pointer. Wheel and track scrolling through `set_offset_from_scrollbar` moves
+  the list by the distance asked. The tests at the end of `list.rs` cover it.
 
 ## The mobile crate
 

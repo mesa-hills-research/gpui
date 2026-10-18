@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 //! A list element that can be used to render a large number of differently sized elements
 //! efficiently. Clients of this API need to ensure that elements outside of the scrolled
 //! area do not change their height for this element to function correctly. If your elements
@@ -15,8 +16,13 @@ use crate::{
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
-use std::{cell::RefCell, ops::Range, rc::Rc};
+use std::{cell::RefCell, cmp::Ordering, ops::Range, rc::Rc};
 use sum_tree::{Bias, Dimensions, SumTree};
+
+/// How far the scrollbar's thumb may lead or trail the list, as a share of
+/// the list's distance to its nearer end. Corrections from measuring rows
+/// beyond this show as a jump of the thumb.
+const THUMB_LEAD: f32 = 0.5;
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 
@@ -69,10 +75,39 @@ struct StateInner {
     reset: bool,
     #[allow(clippy::type_complexity)]
     scroll_handler: Option<Box<dyn FnMut(&ListScrollEvent, &mut Window, &mut App)>>,
-    scrollbar_drag_start_height: Option<Pixels>,
+    scrollbar_drag: Option<ScrollbarDrag>,
+    scrollbar_anchor: Option<ScrollbarAnchor>,
     measuring_behavior: ListMeasuringBehavior,
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
+}
+
+/// Where the scrollbar's thumb was last shown. It holds the list's scroll
+/// top then, the thumb's place along its track (0 at the start, 1 at the
+/// end), and the height the scrollbar counts for each item of unknown
+/// height.
+///
+/// The thumb moves from here as the list scrolls, in proportion to the
+/// distance left to the end it moves toward. Measuring items that were
+/// estimated changes the list's estimated height without moving the
+/// thumb, and the thumb still reaches each end together with the list.
+/// The estimate moves toward the mean height of the items measured as the
+/// list scrolls, so the thumb's size changes gradually too.
+#[derive(Clone, Copy, Debug)]
+struct ScrollbarAnchor {
+    top: ListOffset,
+    fraction: f32,
+    estimate: Pixels,
+}
+
+/// The scroll range a drag of the scrollbar's thumb started with, and the
+/// thumb's place and offset that the pointer set last. They hold still
+/// until the drag ends.
+#[derive(Clone, Copy, Debug)]
+struct ScrollbarDrag {
+    max_offset: Pixels,
+    fraction: f32,
+    offset: Pixels,
 }
 
 /// Deferred scroll adjustment applied after the scroll-top item has been remeasured.
@@ -295,7 +330,34 @@ struct ListItemSummary {
     unrendered_count: usize,
     height: Pixels,
     has_focus_handles: bool,
-    has_unknown_height: bool,
+    /// Items neither measured nor given a size hint, which count no height.
+    unknown_count: usize,
+}
+
+impl ListItemSummary {
+    /// The height an item of unknown height is estimated at, which is the
+    /// mean height of the items whose height is known.
+    fn estimated_item_height(&self) -> Pixels {
+        let known = self.count - self.unknown_count;
+        if known == 0 {
+            px(0.)
+        } else {
+            self.height / known as f32
+        }
+    }
+
+    /// The height of these items, each of unknown height counting
+    /// `estimate`.
+    fn estimated_height(&self, estimate: Pixels) -> Pixels {
+        self.height + estimate * self.unknown_count as f32
+    }
+}
+
+/// A height into the list, each item of unknown height counting `estimate`.
+#[derive(Clone, Debug)]
+struct EstimatedHeight {
+    height: Pixels,
+    estimate: Pixels,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -321,7 +383,8 @@ impl ListState {
             overdraw,
             scroll_handler: None,
             reset: false,
-            scrollbar_drag_start_height: None,
+            scrollbar_drag: None,
+            scrollbar_anchor: None,
             measuring_behavior: ListMeasuringBehavior::default(),
             pending_scroll: None,
             follow_state: FollowState::default(),
@@ -359,11 +422,12 @@ impl ListState {
             state.measuring_behavior.reset();
             state.logical_scroll_top = None;
             state.pending_scroll = None;
-            state.scrollbar_drag_start_height = None;
+            state.scrollbar_drag = None;
+            state.scrollbar_anchor = None;
             state.items.summary().count
         };
 
-        self.splice(0..old_count, element_count);
+        self.splice_items(0..old_count, vec![None; element_count], false);
     }
 
     /// Reset the list to `element_count` items, pre-populating every item with a
@@ -485,7 +549,7 @@ impl ListState {
         let state = self.0.borrow();
         let bounds = state.last_layout_bounds?;
         let summary = state.items.summary();
-        if summary.has_unknown_height {
+        if summary.unknown_count > 0 {
             return None;
         }
         let padding = state.last_padding.unwrap_or_default();
@@ -500,6 +564,9 @@ impl ListState {
 
     /// Inform the list state that the items in `old_range` have been replaced
     /// by `count` new items that must be recalculated.
+    ///
+    /// Items replaced one for one keep their old heights as estimates until
+    /// they're drawn again.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         self.splice_focusable(old_range, (0..count).map(|_| None))
     }
@@ -508,44 +575,74 @@ impl ListState {
     /// by new items. As opposed to [`Self::splice`], this method allows an iterator of optional focus handles
     /// to be supplied to properly integrate with items in the list that can be focused. If a focused item
     /// is scrolled out of view, the list will continue to render it to allow keyboard interaction.
+    ///
+    /// Items replaced one for one keep their old heights as estimates until
+    /// they're drawn again, so the scrollbar keeps its size. The scrollbar's
+    /// thumb moves by as much as the change moved the list's scroll top
+    /// along the list.
     pub fn splice_focusable(
         &self,
         old_range: Range<usize>,
         focus_handles: impl IntoIterator<Item = Option<FocusHandle>>,
     ) {
+        self.splice_items(old_range, focus_handles.into_iter().collect(), true);
+    }
+
+    fn splice_items(
+        &self,
+        old_range: Range<usize>,
+        focus_handles: Vec<Option<FocusHandle>>,
+        keep_heights: bool,
+    ) {
         let state = &mut *self.0.borrow_mut();
+        let line_before = state.scrollbar_before_change();
 
         let mut old_items = state.items.cursor::<Count>(());
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right);
-        old_items.seek_forward(&Count(old_range.end), Bias::Right);
+        let replaced = old_items.slice(&Count(old_range.end), Bias::Right);
 
-        let mut spliced_count = 0;
-        new_items.extend(
-            focus_handles.into_iter().map(|focus_handle| {
-                spliced_count += 1;
-                ListItem::Unmeasured {
-                    size_hint: None,
-                    focus_handle,
-                }
-            }),
-            (),
-        );
+        let spliced_count = focus_handles.len();
+        if keep_heights && replaced.summary().count == spliced_count {
+            new_items.extend(
+                replaced
+                    .iter()
+                    .zip(focus_handles)
+                    .map(|(old, focus_handle)| ListItem::Unmeasured {
+                        size_hint: old.size_hint(),
+                        focus_handle,
+                    }),
+                (),
+            );
+        } else {
+            new_items.extend(
+                focus_handles
+                    .into_iter()
+                    .map(|focus_handle| ListItem::Unmeasured {
+                        size_hint: None,
+                        focus_handle,
+                    }),
+                (),
+            );
+        }
         new_items.append(old_items.suffix(), ());
         drop(old_items);
         state.items = new_items;
 
-        if let Some(ListOffset {
-            item_ix,
-            offset_in_item,
-        }) = state.logical_scroll_top.as_mut()
-        {
-            if old_range.contains(item_ix) {
-                *item_ix = old_range.start;
-                *offset_in_item = px(0.);
-            } else if old_range.end <= *item_ix {
-                *item_ix = *item_ix - (old_range.end - old_range.start) + spliced_count;
+        let shift = |offset: &mut ListOffset| {
+            if old_range.contains(&offset.item_ix) {
+                offset.item_ix = old_range.start;
+                offset.offset_in_item = px(0.);
+            } else if old_range.end <= offset.item_ix {
+                offset.item_ix = offset.item_ix - (old_range.end - old_range.start) + spliced_count;
             }
+        };
+        if let Some(offset) = state.logical_scroll_top.as_mut() {
+            shift(offset);
         }
+        if let Some(anchor) = state.scrollbar_anchor.as_mut() {
+            shift(&mut anchor.top);
+        }
+        state.scrollbar_after_change(line_before);
     }
 
     /// Set a handler that will be called when the list is scrolled.
@@ -738,18 +835,26 @@ impl ListState {
 
     /// Call this method when the user starts dragging the scrollbar.
     ///
-    /// This will prevent the height reported to the scrollbar from changing during the drag
-    /// as items in the overdraw get measured, and help offset scroll position changes accordingly.
+    /// Until the drag ends, the scrollbar is given the scroll range it had
+    /// when the drag started, and the offset the drag set last, so the thumb
+    /// keeps its size and stays under the pointer while the rows it brings
+    /// into view are measured.
     pub fn scrollbar_drag_started(&self) {
-        let mut state = self.0.borrow_mut();
-        state.scrollbar_drag_start_height = Some(state.items.summary().height);
+        let state = &mut *self.0.borrow_mut();
+        state.scrollbar_drag = None;
+        let (fraction, max_offset, offset) = state.scrollbar_position();
+        state.scrollbar_drag = Some(ScrollbarDrag {
+            max_offset,
+            fraction,
+            offset,
+        });
     }
 
     /// Called when the user stops dragging the scrollbar.
     ///
     /// See `scrollbar_drag_started`.
     pub fn scrollbar_drag_ended(&self) {
-        self.0.borrow_mut().scrollbar_drag_start_height.take();
+        self.0.borrow_mut().scrollbar_drag.take();
     }
 
     /// Returns `true` if the scrollbar is currently being dragged.
@@ -759,40 +864,43 @@ impl ListState {
     /// consumers that need to distinguish scrollbar drags from wheel/trackpad scrolls,
     /// e.g. to suppress auto-scroll behavior during manual positioning.
     pub fn is_scrollbar_dragging(&self) -> bool {
-        self.0.borrow().scrollbar_drag_start_height.is_some()
+        self.0.borrow().scrollbar_drag.is_some()
     }
 
-    /// Set the offset from the scrollbar
+    /// Set the offset from the scrollbar.
+    ///
+    /// While the thumb is dragged, the offset places the thumb, and the list
+    /// scrolls to the matching place. Otherwise the list scrolls by the
+    /// distance from the offset last reported to this one, as the wheel or a
+    /// click on the track asks. An offset at either end of the range scrolls
+    /// to that end of the list.
     pub fn set_offset_from_scrollbar(&self, point: Point<Pixels>) {
         self.0.borrow_mut().set_offset_from_scrollbar(point);
     }
 
-    /// Returns the maximum scroll offset according to the items we have measured.
-    /// This value remains constant while dragging to prevent the scrollbar from moving away unexpectedly.
+    /// Returns the maximum scroll offset for the scrollbar, which is the
+    /// height of the items and the padding less the viewport's height.
+    ///
+    /// Items not measured yet count with a size hint if they have one, and
+    /// otherwise with the mean height of the items whose height is known.
+    /// This value remains constant while dragging to prevent the scrollbar
+    /// from moving away unexpectedly.
     pub fn max_offset_for_scrollbar(&self) -> Point<Pixels> {
-        let state = self.0.borrow();
-        point(Pixels::ZERO, state.max_scroll_offset())
+        let (_, max_offset, _) = self.0.borrow_mut().scrollbar_position();
+        point(Pixels::ZERO, max_offset)
     }
 
     /// Returns the current scroll offset adjusted for the scrollbar.
     ///
     /// The returned offset has a negative `y` component representing
-    /// how far the content has scrolled.
+    /// how far the content has scrolled. It is zero at the start of the list
+    /// and the negated [`Self::max_offset_for_scrollbar`] at its end. In
+    /// between, it moves with the list in proportion to the distance left to
+    /// the end the list scrolls toward, so it doesn't jump when the rows
+    /// brought into view turn out taller or shorter than estimated.
     pub fn scroll_px_offset_for_scrollbar(&self) -> Point<Pixels> {
-        let state = &self.0.borrow();
-
-        if state.logical_scroll_top.is_none() && state.alignment == ListAlignment::Bottom {
-            return Point::new(px(0.), -state.max_scroll_offset());
-        }
-
-        let logical_scroll_top = state.logical_scroll_top();
-
-        let mut cursor = state.items.cursor::<ListItemSummary>(());
-        let summary: ListItemSummary =
-            cursor.summary(&Count(logical_scroll_top.item_ix), Bias::Right);
-        let offset = summary.height + logical_scroll_top.offset_in_item;
-
-        Point::new(px(0.), -offset)
+        let (_, _, offset) = self.0.borrow_mut().scrollbar_position();
+        point(Pixels::ZERO, -offset)
     }
 
     /// Return the bounds of the viewport in pixels.
@@ -875,12 +983,150 @@ impl StateInner {
         };
     }
 
-    fn max_scroll_offset(&self) -> Pixels {
+    /// The height the scrollbar counts for each item of unknown height.
+    fn scrollbar_estimate(&self) -> Pixels {
+        match self.scrollbar_anchor {
+            Some(anchor) => anchor.estimate,
+            None => self.items.summary().estimated_item_height(),
+        }
+    }
+
+    /// The scroll range by the estimated heights, which is the height of the
+    /// items and the padding less the viewport's height.
+    fn estimated_max_offset(&self) -> Pixels {
         let bounds = self.last_layout_bounds.unwrap_or_default();
+        let padding = self.last_padding.unwrap_or_default();
         let height = self
-            .scrollbar_drag_start_height
-            .unwrap_or_else(|| self.items.summary().height);
-        (height - bounds.size.height).max(px(0.))
+            .items
+            .summary()
+            .estimated_height(self.scrollbar_estimate());
+        (height + padding.top + padding.bottom - bounds.size.height).max(px(0.))
+    }
+
+    /// How far down the list `top` is, by the estimated heights.
+    fn estimated_offset(&self, top: ListOffset) -> Pixels {
+        let mut cursor = self.items.cursor::<ListItemSummary>(());
+        let above: ListItemSummary = cursor.summary(&Count(top.item_ix), Bias::Right);
+        above.estimated_height(self.scrollbar_estimate()) + top.offset_in_item
+    }
+
+    /// How far down the list the scroll top is, by the estimated heights,
+    /// within the scroll range `max_offset`.
+    fn estimated_scroll_offset(&self, max_offset: Pixels) -> Pixels {
+        if self.logical_scroll_top.is_none() && self.alignment == ListAlignment::Bottom {
+            return max_offset;
+        }
+        self.estimated_offset(self.logical_scroll_top())
+            .clamp(px(0.), max_offset)
+    }
+
+    /// The scroll top `offset` down the list, by the estimated heights.
+    fn estimated_list_offset(&self, offset: Pixels) -> ListOffset {
+        let estimate = self.scrollbar_estimate();
+        let target = EstimatedHeight {
+            height: offset,
+            estimate,
+        };
+        let (start, _, _) = self
+            .items
+            .find::<ListItemSummary, _>((), &target, Bias::Right);
+        ListOffset {
+            item_ix: start.count,
+            offset_in_item: offset - start.estimated_height(estimate),
+        }
+    }
+
+    /// The thumb's place along its track, the scroll range, and the offset
+    /// the scrollbar shows, brought up to where the list is now. While the
+    /// thumb is dragged, these are what the drag set.
+    fn scrollbar_position(&mut self) -> (f32, Pixels, Pixels) {
+        if let Some(drag) = self.scrollbar_drag {
+            return (drag.fraction, drag.max_offset, drag.offset);
+        }
+        let mean = self.items.summary().estimated_item_height();
+        // The thumb follows the list's move since it was last shown, by the
+        // estimate it was shown with. The estimate catches up with the mean
+        // over a viewport's height of scrolling.
+        let followed = self.scrollbar_anchor.map(|anchor| {
+            let max_offset = self.estimated_max_offset();
+            let from = self.estimated_offset(anchor.top).clamp(px(0.), max_offset);
+            let offset = self.estimated_scroll_offset(max_offset);
+            let fraction = if max_offset > px(0.) {
+                follow(anchor.fraction, from, offset, max_offset)
+            } else {
+                0.
+            };
+            let viewport = self.last_layout_bounds.unwrap_or_default().size.height;
+            let catch_up = if anchor.estimate <= px(0.) || viewport <= px(0.) {
+                1.
+            } else {
+                ((offset - from).abs() / viewport).min(1.)
+            };
+            (
+                fraction,
+                anchor.estimate + (mean - anchor.estimate) * catch_up,
+            )
+        });
+        let top = self.logical_scroll_top();
+        let estimate = followed.map_or(mean, |(_, estimate)| estimate);
+        self.scrollbar_anchor = Some(ScrollbarAnchor {
+            top,
+            fraction: 0.,
+            estimate,
+        });
+        let max_offset = self.estimated_max_offset();
+        let offset = self.estimated_scroll_offset(max_offset);
+        let line = scroll_fraction(offset, max_offset);
+        let mut fraction = bound_thumb(
+            followed.map_or(line, |(fraction, _)| fraction),
+            offset,
+            max_offset,
+        );
+        // On the list's own place, the scrollbar gets the list's offset
+        // exactly.
+        let shown = if (max_offset * (fraction - line)).abs() < px(0.01) {
+            fraction = line;
+            offset
+        } else {
+            max_offset * fraction
+        };
+        self.scrollbar_anchor = Some(ScrollbarAnchor {
+            top,
+            fraction,
+            estimate,
+        });
+        (fraction, max_offset, shown)
+    }
+
+    /// Before the items change, brings the thumb up to date and returns how
+    /// far along the scroll range the list is, if the scrollbar has shown.
+    fn scrollbar_before_change(&mut self) -> Option<f32> {
+        if self.scrollbar_anchor.is_none() || self.scrollbar_drag.is_some() {
+            return None;
+        }
+        self.scrollbar_position();
+        let max_offset = self.estimated_max_offset();
+        Some(scroll_fraction(
+            self.estimated_scroll_offset(max_offset),
+            max_offset,
+        ))
+    }
+
+    /// After the items change, moves the thumb by as much as the change
+    /// moved the list along its scroll range (`line_before` is from
+    /// [`Self::scrollbar_before_change`]).
+    fn scrollbar_after_change(&mut self, line_before: Option<f32>) {
+        let Some(line_before) = line_before else {
+            return;
+        };
+        let max_offset = self.estimated_max_offset();
+        let offset = self.estimated_scroll_offset(max_offset);
+        let line = scroll_fraction(offset, max_offset);
+        let top = self.logical_scroll_top();
+        if let Some(anchor) = self.scrollbar_anchor.as_mut() {
+            anchor.top = top;
+            anchor.fraction = bound_thumb(anchor.fraction + line - line_before, offset, max_offset);
+        }
     }
 
     fn visible_range(
@@ -1369,53 +1615,142 @@ impl StateInner {
     // Scrollbar support
 
     fn set_offset_from_scrollbar(&mut self, point: Point<Pixels>) {
-        let Some(bounds) = self.last_layout_bounds else {
-            return;
-        };
-        let height = bounds.size.height;
-
-        let padding = self.last_padding.unwrap_or_default();
-        // Scrollbar drag positions are computed from the content height
-        // captured at drag start, so map them back using the same height.
-        let content_height = self
-            .scrollbar_drag_start_height
-            .unwrap_or_else(|| self.items.summary().height);
-        let scroll_max = (content_height + padding.top + padding.bottom - height).max(px(0.));
-        let new_scroll_top = (-point.y).max(px(0.)).min(scroll_max);
-
-        // If content grew during the drag, the frozen bottom is below the
-        // live bottom. Treat dragging to the frozen end as resuming tail follow.
-        let dragged_to_end =
-            scroll_max > px(0.) && new_scroll_top >= (scroll_max - px(1.0)).max(px(0.));
-        if dragged_to_end && matches!(self.follow_state, FollowState::Tail { .. }) {
-            self.follow_state = FollowState::Tail { is_following: true };
-            let item_count = self.items.summary().count;
-            self.pending_scroll = None;
-            self.logical_scroll_top = Some(ListOffset {
-                item_ix: item_count,
-                offset_in_item: px(0.),
-            });
+        if self.last_layout_bounds.is_none() {
             return;
         }
 
-        self.follow_state.stop_following();
-
-        if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
-            self.pending_scroll = None;
-            self.logical_scroll_top = None;
-        } else {
-            let (start, _, _) =
-                self.items
-                    .find::<ListItemSummary, _>((), &Height(new_scroll_top), Bias::Right);
-
-            let scroll_top = ListOffset {
-                item_ix: start.count,
-                offset_in_item: new_scroll_top - start.height,
+        // How far down the list goes, or `None` for its end.
+        let (target, max_offset) = if let Some(drag) = self.scrollbar_drag {
+            // The thumb goes where the pointer puts it, on the scale the drag
+            // started with, and the list to the matching place on its own.
+            let offset = (-point.y).clamp(px(0.), drag.max_offset);
+            let fraction = scroll_fraction(offset, drag.max_offset);
+            self.scrollbar_drag = Some(ScrollbarDrag {
+                fraction,
+                offset,
+                ..drag
+            });
+            let max_offset = self.estimated_max_offset();
+            let anchor = self.scrollbar_anchor.unwrap_or(ScrollbarAnchor {
+                top: self.logical_scroll_top(),
+                fraction: drag.fraction,
+                estimate: self.scrollbar_estimate(),
+            });
+            let from = self.estimated_offset(anchor.top).clamp(px(0.), max_offset);
+            let target = if fraction >= 1. {
+                None
+            } else if fraction <= 0. {
+                Some(px(0.))
+            } else {
+                Some(unfollow(anchor.fraction, from, fraction, max_offset))
             };
-            self.rebase_pending_scroll(scroll_top);
-            self.logical_scroll_top = Some(scroll_top);
+            (target, max_offset)
+        } else {
+            // For the wheel or a click on the track, the list scrolls by the
+            // distance between the offset shown and the one asked for.
+            let (_, shown_max, shown) = self.scrollbar_position();
+            let max_offset = self.estimated_max_offset();
+            let asked = (-point.y).clamp(px(0.), shown_max);
+            let target = if shown_max > px(0.) && asked >= shown_max {
+                None
+            } else if asked <= px(0.) {
+                Some(px(0.))
+            } else {
+                let offset = self.estimated_scroll_offset(max_offset);
+                Some((offset + asked - shown).clamp(px(0.), max_offset))
+            };
+            (target, max_offset)
+        };
+
+        match target {
+            Some(offset) if offset < max_offset || max_offset <= px(0.) => {
+                self.follow_state.stop_following();
+                let scroll_top = self.estimated_list_offset(offset);
+                self.rebase_pending_scroll(scroll_top);
+                self.logical_scroll_top = Some(scroll_top);
+                if let Some(drag) = self.scrollbar_drag {
+                    self.scrollbar_anchor = Some(ScrollbarAnchor {
+                        top: scroll_top,
+                        fraction: drag.fraction,
+                        estimate: self.scrollbar_estimate(),
+                    });
+                }
+            }
+            _ => {
+                // The end of the list, laid out from its last item up. A list
+                // that follows its tail follows it again.
+                if let FollowState::Tail { .. } = self.follow_state {
+                    self.follow_state = FollowState::Tail { is_following: true };
+                }
+                self.pending_scroll = None;
+                let end = ListOffset {
+                    item_ix: self.items.summary().count,
+                    offset_in_item: px(0.),
+                };
+                self.logical_scroll_top = match self.alignment {
+                    ListAlignment::Top => Some(end),
+                    ListAlignment::Bottom => None,
+                };
+                self.scrollbar_anchor = Some(ScrollbarAnchor {
+                    top: end,
+                    fraction: 1.,
+                    estimate: self.scrollbar_estimate(),
+                });
+            }
         }
     }
+}
+
+/// How far along the scroll range `max_offset` the offset `offset` is.
+fn scroll_fraction(offset: Pixels, max_offset: Pixels) -> f32 {
+    if max_offset > px(0.) {
+        (offset / max_offset).clamp(0., 1.)
+    } else {
+        0.
+    }
+}
+
+/// Moves the thumb from `fraction`, where the list was `from` down its scroll
+/// range `max_offset`, to where the list is now, `to` down. The thumb covers
+/// its distance to the end it moves toward in proportion to the list's, so
+/// both reach that end together, and the gap between the thumb and the list
+/// narrows as the list scrolls.
+fn follow(fraction: f32, from: Pixels, to: Pixels, max_offset: Pixels) -> f32 {
+    if to > from {
+        fraction + (1. - fraction) * ((to - from) / (max_offset - from))
+    } else if to < from {
+        fraction * (to / from)
+    } else {
+        fraction
+    }
+}
+
+/// The inverse of [`follow`]. Returns how far down the scroll range
+/// `max_offset` the list goes for the thumb to move from `fraction`, with the
+/// list `from` down, to `to_fraction`.
+fn unfollow(fraction: f32, from: Pixels, to_fraction: f32, max_offset: Pixels) -> Pixels {
+    if to_fraction > fraction {
+        from + (max_offset - from) * ((to_fraction - fraction) / (1. - fraction))
+    } else if to_fraction < fraction {
+        from * (to_fraction / fraction)
+    } else {
+        from
+    }
+}
+
+/// Keeps the thumb's place `fraction` close to the list's, `offset` down its
+/// scroll range `max_offset`. The thumb is at either end when the list is, and
+/// otherwise within [`THUMB_LEAD`] of the list's distance to its nearer end.
+fn bound_thumb(fraction: f32, offset: Pixels, max_offset: Pixels) -> f32 {
+    if max_offset <= px(0.) || offset <= px(0.) {
+        return 0.;
+    }
+    if offset >= max_offset - px(0.5) {
+        return 1.;
+    }
+    let line = offset / max_offset;
+    let room = line.min(1. - line) * THUMB_LEAD;
+    fraction.clamp(line - room, line + room)
 }
 
 impl std::fmt::Debug for ListItem {
@@ -1540,14 +1875,15 @@ impl Element for List {
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
-        // If the width of the list has changed, invalidate all cached item heights
+        // If the width of the list has changed, invalidate all cached item
+        // heights. They stay as estimates until the items are measured again.
         if state
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: None,
+                    size_hint: item.size_hint(),
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -1653,7 +1989,7 @@ impl sum_tree::Item for ListItem {
                     px(0.)
                 },
                 has_focus_handles: focus_handle.is_some(),
-                has_unknown_height: size_hint.is_none(),
+                unknown_count: usize::from(size_hint.is_none()),
             },
             ListItem::Measured {
                 size, focus_handle, ..
@@ -1663,7 +1999,7 @@ impl sum_tree::Item for ListItem {
                 unrendered_count: 0,
                 height: size.height,
                 has_focus_handles: focus_handle.is_some(),
-                has_unknown_height: false,
+                unknown_count: 0,
             },
         }
     }
@@ -1680,7 +2016,7 @@ impl sum_tree::ContextLessSummary for ListItemSummary {
         self.unrendered_count += summary.unrendered_count;
         self.height += summary.height;
         self.has_focus_handles |= summary.has_focus_handles;
-        self.has_unknown_height |= summary.has_unknown_height;
+        self.unknown_count += summary.unknown_count;
     }
 }
 
@@ -1713,6 +2049,14 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Count {
 impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for Height {
     fn cmp(&self, other: &ListItemSummary, _: ()) -> std::cmp::Ordering {
         self.0.partial_cmp(&other.height).unwrap()
+    }
+}
+
+impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for EstimatedHeight {
+    fn cmp(&self, other: &ListItemSummary, _: ()) -> Ordering {
+        self.height
+            .partial_cmp(&other.estimated_height(self.estimate))
+            .unwrap()
     }
 }
 
@@ -2969,5 +3313,331 @@ mod test {
              the bottom of its track, even when content has grown during the drag \
              (so frozen_bottom < live_bottom)"
         );
+    }
+
+    /// The height of item `ix` in the lists of mixed heights, from 20px to
+    /// 578px in no particular order.
+    fn mixed_height(ix: usize) -> f32 {
+        20. + ((ix as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 59) as f32 * 18.
+    }
+
+    /// How far down the list `offset` is, by the items' real heights.
+    fn mixed_offset(offset: gpui::ListOffset) -> f32 {
+        (0..offset.item_ix).map(mixed_height).sum::<f32>() + offset.offset_in_item.0
+    }
+
+    struct MixedView(ListState);
+
+    impl Render for MixedView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            list(self.0.clone(), |ix, _, _| {
+                div().h(px(mixed_height(ix))).w_full().into_any()
+            })
+            .w_full()
+            .h_full()
+        }
+    }
+
+    /// How far along its track the scrollbar's thumb is, and the content
+    /// height its size comes from.
+    #[derive(Clone, Copy, Debug)]
+    struct Thumb {
+        fraction: f32,
+        content: f32,
+    }
+
+    fn thumb(state: &ListState) -> Thumb {
+        let max = state.max_offset_for_scrollbar().y;
+        let offset = -state.scroll_px_offset_for_scrollbar().y;
+        Thumb {
+            fraction: if max > px(0.) { offset / max } else { 0. },
+            content: (max + state.viewport_bounds().size.height).0,
+        }
+    }
+
+    /// How the thumb moved from frame to frame while the list scrolled one
+    /// way, on a track of `track` px with a thumb of at least 48px. Steps are
+    /// in px, and `resize` is the largest change of the content height the
+    /// thumb's size comes from, as a share of it.
+    #[derive(Debug)]
+    struct ThumbMoves {
+        step: f32,
+        median: f32,
+        back: f32,
+        resize: f32,
+    }
+
+    fn thumb_moves(thumbs: &[Thumb], down: bool, track: f32) -> ThumbMoves {
+        let top = |thumb: &Thumb| {
+            let length = (track / thumb.content * track).clamp(48., track);
+            thumb.fraction * (track - length)
+        };
+        let mut steps: Vec<f32> = Vec::new();
+        let (mut back, mut resize) = (0f32, 0f32);
+        for pair in thumbs.windows(2) {
+            let step = top(&pair[1]) - top(&pair[0]);
+            back = back.max(if down { -step } else { step });
+            resize = resize.max((pair[1].content - pair[0].content).abs() / pair[0].content);
+            steps.push(step.abs());
+        }
+        steps.sort_by(f32::total_cmp);
+        ThumbMoves {
+            step: steps.last().copied().unwrap_or_default(),
+            median: steps[steps.len() / 2],
+            back,
+            resize,
+        }
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_moves_smoothly_over_unmeasured_items_of_mixed_heights(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+
+        // 400 items of 20px to 578px, drawn from the end, 300px at a time.
+        let state = ListState::new(400, crate::ListAlignment::Top, px(100.));
+        state.set_follow_mode(FollowMode::Tail);
+        let view = cx.update(|_, cx| cx.new(|_| MixedView(state.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+
+        // Up to the start with the list's own wheel handling, 60px a frame.
+        let mut up = vec![thumb(&state)];
+        while up.last().unwrap().fraction > 0. && up.len() < 10_000 {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(50.), px(150.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(60.))),
+                ..Default::default()
+            });
+            draw(cx);
+            up.push(thumb(&state));
+        }
+
+        // Down to the end by the scrollbar's offset, as a wheel handler that
+        // scrolls through the scrollbar does it. The list moves exactly as
+        // far as asked.
+        let mut down = vec![thumb(&state)];
+        while down.last().unwrap().fraction < 1. && down.len() < 10_000 {
+            let max = state.max_offset_for_scrollbar().y;
+            let offset = state.scroll_px_offset_for_scrollbar().y;
+            let asked = (offset - px(60.)).max(-max);
+            let before = mixed_offset(state.logical_scroll_top());
+            state.set_offset_from_scrollbar(point(px(0.), asked));
+            draw(cx);
+            let moved = mixed_offset(state.logical_scroll_top()) - before;
+            if asked > -max {
+                assert!((moved - (offset - asked).0).abs() < 0.05, "{moved}");
+            }
+            down.push(thumb(&state));
+        }
+
+        let up_moves = thumb_moves(&up, false, 300.);
+        let down_moves = thumb_moves(&down, true, 300.);
+        eprintln!("up {} frames: {up_moves:?}", up.len());
+        eprintln!("down {} frames: {down_moves:?}", down.len());
+        let viewport = state.viewport_bounds();
+        let last = state.bounds_for_item(399).expect("the last item shows");
+        assert_eq!(last.bottom(), viewport.bottom());
+        for moves in [up_moves, down_moves] {
+            assert!(moves.back <= 0.01, "{moves:?}");
+            assert!(moves.step <= moves.median * 3. + 1., "{moves:?}");
+            assert!(moves.resize <= 0.05, "{moves:?}");
+        }
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_thumb_stays_under_pointer_while_dragged_over_unmeasured_items(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+
+        let state = ListState::new(400, crate::ListAlignment::Top, px(100.));
+        state.set_follow_mode(FollowMode::Tail);
+        let view = cx.update(|_, cx| cx.new(|_| MixedView(state.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+
+        // From the end of the track to near its start, a step a frame, while
+        // the items the list scrolls to are measured.
+        state.scrollbar_drag_started();
+        let max = state.max_offset_for_scrollbar().y;
+        let mut drift = px(0.);
+        let mut last_item = state.logical_scroll_top().item_ix;
+        for step in 1..100 {
+            let asked = -max * (1. - step as f32 / 100.);
+            state.set_offset_from_scrollbar(point(px(0.), asked));
+            draw(cx);
+            assert_eq!(state.max_offset_for_scrollbar().y, max);
+            drift = drift.max((state.scroll_px_offset_for_scrollbar().y - asked).abs());
+            let item = state.logical_scroll_top().item_ix;
+            assert!(item <= last_item, "the list scrolled back");
+            last_item = item;
+        }
+        state.scrollbar_drag_ended();
+        eprintln!("drift under the pointer: {drift:?}");
+        assert!(
+            drift < px(0.01),
+            "the thumb moved {drift:?} under the pointer"
+        );
+        assert!(
+            last_item < 10,
+            "the list didn't follow the thumb: {last_item}"
+        );
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_reaches_both_ends_past_items_taller_than_estimated(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // Twenty short items, then a hundred tall ones. Drawn from the start,
+        // the list estimates the tall ones far too short.
+        let state = ListState::new(120, crate::ListAlignment::Top, px(0.));
+        struct TallerView(ListState);
+        impl Render for TallerView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    let height = if ix < 20 { 20. } else { 400. };
+                    div().h(px(height)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+        let view = cx.update(|_, cx| cx.new(|_| TallerView(state.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        let at_end = |state: &ListState| {
+            let viewport = state.viewport_bounds();
+            state
+                .bounds_for_item(119)
+                .is_some_and(|bounds| bounds.bottom() == viewport.bottom())
+        };
+        draw(cx);
+
+        // Dragged past the end of the track, the list shows its last item.
+        state.scrollbar_drag_started();
+        let max = state.max_offset_for_scrollbar().y;
+        state.set_offset_from_scrollbar(point(px(0.), -max * 0.5));
+        draw(cx);
+        state.set_offset_from_scrollbar(point(px(0.), -max - px(10.)));
+        draw(cx);
+        state.scrollbar_drag_ended();
+        draw(cx);
+        assert!(at_end(&state), "{:?}", state.logical_scroll_top());
+        assert_eq!(thumb(&state).fraction, 1.);
+
+        // And past the start of the track, its first.
+        state.scrollbar_drag_started();
+        state.set_offset_from_scrollbar(point(px(0.), px(10.)));
+        draw(cx);
+        state.scrollbar_drag_ended();
+        let top = state.logical_scroll_top();
+        assert_eq!((top.item_ix, top.offset_in_item), (0, px(0.)));
+        assert_eq!(thumb(&state).fraction, 0.);
+
+        // A click at the end of the track, without a drag, goes to the end.
+        let max = state.max_offset_for_scrollbar().y;
+        state.set_offset_from_scrollbar(point(px(0.), -max));
+        draw(cx);
+        assert!(at_end(&state), "{:?}", state.logical_scroll_top());
+    }
+
+    #[gpui::test]
+    fn test_width_change_keeps_heights_as_estimates(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // Fifty items of 20px, then fifty of 80px, 5000px in all.
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.));
+        struct HalvesView(ListState);
+        impl Render for HalvesView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    let height = if ix < 50 { 20. } else { 80. };
+                    div().h(px(height)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+        let view = cx.update(|_, cx| cx.new(|_| HalvesView(state.clone())));
+
+        // Every item measured once, from the end up to the start.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 100,
+            offset_in_item: px(0.),
+        });
+        for ix in (0..100).rev() {
+            state.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.),
+            });
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        }
+        assert_eq!(state.max_offset_for_scrollbar().y, px(4800.));
+
+        // At another width only the items at the start are measured again,
+        // and the others count their old heights.
+        cx.draw(point(px(0.), px(0.)), size(px(150.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert_eq!(state.max_offset_for_scrollbar().y, px(4800.));
+
+        // Items replaced one for one keep their heights as estimates too.
+        state.splice(60..70, 10);
+        assert_eq!(state.max_offset_for_scrollbar().y, px(4800.));
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_range_takes_measured_heights_at_once(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // Fifty items of 20px, all measured, in a 200px viewport.
+        let item_height = Rc::new(Cell::new(20.));
+        let state = ListState::new(50, crate::ListAlignment::Top, px(0.)).measure_all();
+        struct GrowingView(ListState, Rc<Cell<f32>>);
+        impl Render for GrowingView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let height = self.1.get();
+                list(self.0.clone(), move |_, _, _| {
+                    div().h(px(height)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+        let view = cx.update(|_, cx| cx.new(|_| GrowingView(state.clone(), item_height.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+        assert_eq!(state.max_offset_for_scrollbar().y, px(800.));
+
+        // The scrollbar gets the list's offset exactly.
+        state.set_offset_from_scrollbar(point(px(0.), px(-123.)));
+        draw(cx);
+        assert_eq!(state.scroll_px_offset_for_scrollbar().y, px(-123.));
+
+        // The items grow without the list scrolling, and the range grows with
+        // them at once.
+        item_height.set(60.);
+        state.remeasure();
+        draw(cx);
+        assert_eq!(state.max_offset_for_scrollbar().y, px(2800.));
     }
 }
