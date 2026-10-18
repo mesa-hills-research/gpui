@@ -111,6 +111,17 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
 - **The golden ratio**, in `gpui-pre`'s `src/geometry.rs`. `phi()` returns
   `f32::consts::GOLDEN_RATIO` in place of the literal `1.618_034`, which is the same `f32` and
   which the clippy of Rust 1.99 rejects. `gpui-pre-apple`'s copy under `vendor/gpui` follows it.
+- **List scrollbars that hold steady** over items not drawn yet, in `gpui-pre`'s
+  `src/elements/list.rs`. `ListState` counted an item it hadn't measured as 0px tall, so the
+  scrollbar's range grew as the list drew items. While the reader scrolled, the thumb shrank and
+  jumped back, a dragged thumb slid away from the pointer, and a thumb dragged to the top stopped
+  short of the first item. An item not measured yet now counts its size hint, or else the mean
+  height of the items whose height is known, and an item replaced one for one, or invalidated by a
+  width change, keeps its old height as its estimate. The thumb moves with the list in proportion
+  to the distance left to the end it moves toward, so measured items change its speed instead of
+  its place, and both ends of the track are the ends of the list. A dragged thumb keeps its size
+  and stays under the pointer. Wheel and track scrolling through `set_offset_from_scrollbar` moves
+  the list by the distance asked. The tests at the end of `list.rs` cover it.
 
 ## The mobile crate
 
