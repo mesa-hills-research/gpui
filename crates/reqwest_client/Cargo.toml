@@ -1,6 +1,6 @@
 [package]
-name = "gpui-pre-reqwest-client"
-version = "0.3.8"
+name = "mhr-reqwest-client"
+version = "0.1.0"
 edition = { workspace = true }
 publish = true
 license = "Apache-2.0"

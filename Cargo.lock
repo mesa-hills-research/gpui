@@ -2297,328 +2297,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gpui-pre"
-version = "0.3.8"
-dependencies = [
- "accesskit",
- "anyhow",
- "async-channel",
- "async-task",
- "backtrace",
- "bindgen",
- "bitflags 2.13.1",
- "chrono",
- "core-video",
- "criterion",
- "ctor",
- "derive_more",
- "embed-resource",
- "etagere",
- "futures",
- "futures-concurrency",
- "getrandom 0.3.4",
- "gpui-pre-bench-metrics",
- "gpui-pre-collections",
- "gpui-pre-http-client",
- "gpui-pre-macros",
- "gpui-pre-refineable",
- "gpui-pre-scheduler",
- "gpui-pre-shared-string",
- "gpui-pre-sum-tree",
- "gpui-pre-util",
- "gpui-pre-util-macros",
- "hdrhistogram",
- "heapless",
- "image",
- "inventory",
- "itertools 0.14.0",
- "libc",
- "log",
- "lyon",
- "num_cpus",
- "objc2 0.6.3",
- "objc2-core-foundation",
- "objc2-core-video",
- "objc2-metal 0.3.2",
- "parking",
- "parking_lot",
- "pin-project",
- "pollster 0.4.0",
- "postage",
- "profiling",
- "proptest",
- "rand 0.9.4",
- "raw-window-handle",
- "regex",
- "resvg",
- "schemars",
- "seahash",
- "serde",
- "serde_json",
- "slotmap",
- "smallvec",
- "spin 0.10.0",
- "stacksafe",
- "strum",
- "taffy",
- "thiserror 2.0.17",
- "ttf-parser",
- "url",
- "usvg",
- "uuid",
- "waker-fn",
- "web-time",
- "windows 0.62.2",
- "zed-font-kit",
- "zed-scap",
-]
-
-[[package]]
-name = "gpui-pre-apple"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "async-task",
- "block2 0.6.2",
- "cbindgen",
- "core-foundation 0.10.0",
- "core-graphics 0.24.0",
- "core-video",
- "derive_more",
- "dispatch2",
- "etagere",
- "foreign-types",
- "gpui-pre",
- "gpui-pre-util",
- "image",
- "libc",
- "log",
- "mach2",
- "metal",
- "objc2 0.6.3",
- "objc2-foundation 0.3.2",
- "objc2-quartz-core 0.3.2",
- "parking_lot",
-]
-
-[[package]]
-name = "gpui-pre-bench-metrics"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "criterion",
- "libc",
- "perf-event2",
-]
-
-[[package]]
-name = "gpui-pre-collections"
-version = "0.3.8"
-dependencies = [
- "gpui-pre-util",
- "indexmap",
- "rustc-hash 2.1.1",
-]
-
-[[package]]
-name = "gpui-pre-derive-refineable"
-version = "0.3.8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "gpui-pre-http-client"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "async-compression",
- "bytes",
- "derive_more",
- "futures",
- "http",
- "http-body",
- "log",
- "parking_lot",
- "serde",
- "serde_json",
- "serde_urlencoded",
- "url",
-]
-
-[[package]]
-name = "gpui-pre-http-client-tls"
-version = "0.3.8"
-dependencies = [
- "log",
- "rustls",
- "rustls-platform-verifier",
- "webpki-roots",
-]
-
-[[package]]
-name = "gpui-pre-linux"
-version = "0.3.8"
-dependencies = [
- "accesskit",
- "accesskit_unix",
- "anyhow",
- "as-raw-xcb-connection",
- "ashpd",
- "bytemuck",
- "calloop",
- "calloop-wayland-source",
- "filedescriptor",
- "futures",
- "gpui-pre",
- "gpui-pre-collections",
- "gpui-pre-http-client",
- "gpui-pre-util",
- "gpui-pre-wgpu",
- "libc",
- "log",
- "notify-rust",
- "oo7",
- "open",
- "parking_lot",
- "raw-window-handle",
- "smallvec",
- "smol",
- "strum",
- "url",
- "uuid",
- "wayland-backend",
- "wayland-client",
- "wayland-cursor",
- "wayland-protocols",
- "wayland-protocols-plasma",
- "wayland-protocols-wlr",
- "x11rb",
- "xkbcommon",
- "zed-scap",
- "zed-xim",
-]
-
-[[package]]
-name = "gpui-pre-macos"
-version = "0.3.8"
-dependencies = [
- "accesskit",
- "accesskit_macos",
- "anyhow",
- "block2 0.6.2",
- "cocoa 0.26.0",
- "core-foundation 0.10.0",
- "core-foundation-sys",
- "core-graphics 0.24.0",
- "core-text",
- "core-video",
- "ctor",
- "dispatch2",
- "foreign-types",
- "futures",
- "gpui-pre",
- "gpui-pre-apple",
- "gpui-pre-collections",
- "gpui-pre-scheduler",
- "gpui-pre-util",
- "image",
- "itertools 0.14.0",
- "log",
- "objc",
- "objc2 0.6.3",
- "objc2-app-kit 0.3.2",
- "objc2-core-graphics",
- "objc2-core-media",
- "objc2-foundation 0.3.2",
- "objc2-screen-capture-kit",
- "objc2-user-notifications",
- "parking_lot",
- "pathfinder_geometry",
- "raw-window-handle",
- "semver",
- "smallvec",
- "strum",
- "uuid",
- "zed-font-kit",
-]
-
-[[package]]
-name = "gpui-pre-macros"
-version = "0.3.8"
-dependencies = [
- "heck 0.5.0",
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "gpui-pre-mobile"
-version = "0.1.0"
-dependencies = [
- "android-activity",
- "android_logger",
- "anyhow",
- "block2 0.6.2",
- "core-foundation 0.10.0",
- "core-foundation-sys",
- "core-graphics 0.24.0",
- "core-text",
- "futures",
- "gpui-pre",
- "gpui-pre-wgpu",
- "jni",
- "libc",
- "log",
- "ndk",
- "ndk-context",
- "ndk-sys",
- "objc2 0.6.3",
- "parking_lot",
- "pathfinder_geometry",
- "raw-window-handle",
- "rustc-hash 2.1.1",
- "smallvec",
- "uuid",
- "wgpu",
- "zed-font-kit",
-]
-
-[[package]]
-name = "gpui-pre-perf"
-version = "0.3.8"
-dependencies = [
- "gpui-pre-collections",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "gpui-pre-platform"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "console_error_panic_hook",
- "gpui-pre",
- "gpui-pre-linux",
- "gpui-pre-macos",
- "gpui-pre-web",
- "gpui-pre-wgpu",
- "gpui-pre-windows",
-]
-
-[[package]]
-name = "gpui-pre-refineable"
-version = "0.3.8"
-dependencies = [
- "gpui-pre-derive-refineable",
-]
-
-[[package]]
 name = "gpui-pre-reqwest"
 version = "0.12.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2667,202 +2345,6 @@ dependencies = [
  "web-sys",
  "windows-registry 0.4.0",
 ]
-
-[[package]]
-name = "gpui-pre-reqwest-client"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "bytes",
- "futures",
- "gpui-pre-http-client",
- "gpui-pre-http-client-tls",
- "gpui-pre-reqwest",
- "gpui-pre-util",
- "log",
- "regex",
- "tokio",
-]
-
-[[package]]
-name = "gpui-pre-scheduler"
-version = "0.3.8"
-dependencies = [
- "async-task",
- "backtrace",
- "chrono",
- "flume",
- "futures",
- "parking_lot",
- "rand 0.9.4",
- "wasm_thread",
- "web-time",
-]
-
-[[package]]
-name = "gpui-pre-screenshot"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "gpui-pre",
- "gpui-pre-wgpu",
- "image",
- "png 0.18.0",
- "sha2",
- "swash",
-]
-
-[[package]]
-name = "gpui-pre-shared-string"
-version = "0.3.8"
-dependencies = [
- "schemars",
- "serde",
- "smol_str",
-]
-
-[[package]]
-name = "gpui-pre-sum-tree"
-version = "0.3.8"
-dependencies = [
- "gpui-pre-ztracing",
- "heapless",
- "log",
- "proptest",
- "rayon",
- "tracing",
-]
-
-[[package]]
-name = "gpui-pre-util"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "log",
- "which",
-]
-
-[[package]]
-name = "gpui-pre-util-macros"
-version = "0.3.8"
-dependencies = [
- "gpui-pre-perf",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "gpui-pre-web"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "console_error_panic_hook",
- "futures",
- "gpui-pre",
- "gpui-pre-http-client",
- "gpui-pre-scheduler",
- "gpui-pre-wgpu",
- "js-sys",
- "log",
- "parking_lot",
- "raw-window-handle",
- "smallvec",
- "unicode-properties",
- "unicode-script",
- "unicode-segmentation",
- "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm_thread",
- "web-sys",
- "web-time",
-]
-
-[[package]]
-name = "gpui-pre-wgpu"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "bytemuck",
- "cosmic-text",
- "etagere",
- "gpui-pre",
- "gpui-pre-collections",
- "gpui-pre-util",
- "image",
- "itertools 0.14.0",
- "log",
- "parking_lot",
- "profiling",
- "raw-window-handle",
- "smallvec",
- "swash",
- "unicode-bidi",
- "unicode-segmentation",
- "web-sys",
- "wgpu",
- "zed-font-kit",
-]
-
-[[package]]
-name = "gpui-pre-windows"
-version = "0.3.8"
-dependencies = [
- "accesskit",
- "accesskit_windows",
- "anyhow",
- "dunce",
- "etagere",
- "futures",
- "gpui-pre",
- "gpui-pre-collections",
- "gpui-pre-scheduler",
- "gpui-pre-util",
- "image",
- "itertools 0.14.0",
- "log",
- "parking_lot",
- "rand 0.9.4",
- "raw-window-handle",
- "smallvec",
- "uuid",
- "windows 0.62.2",
- "windows-core 0.62.2",
- "windows-numerics 0.3.1",
- "windows-registry 0.6.1",
- "zed-scap",
-]
-
-[[package]]
-name = "gpui-pre-zlog"
-version = "0.3.8"
-dependencies = [
- "anyhow",
- "chrono",
- "gpui-pre-collections",
- "log",
-]
-
-[[package]]
-name = "gpui-pre-ztracing"
-version = "0.3.8"
-dependencies = [
- "async-channel",
- "gpui-pre-zlog",
- "gpui-pre-ztracing-macro",
- "js-sys",
- "tracing",
- "tracing-subscriber",
- "tracing-tracy",
- "tracy-client",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "gpui-pre-ztracing-macro"
-version = "0.3.8"
 
 [[package]]
 name = "h2"
@@ -3818,6 +3300,524 @@ dependencies = [
  "objc",
  "paste",
 ]
+
+[[package]]
+name = "mhr-bench-metrics"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "criterion",
+ "libc",
+ "perf-event2",
+]
+
+[[package]]
+name = "mhr-collections"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "mhr-gpui-util",
+ "rustc-hash 2.1.1",
+]
+
+[[package]]
+name = "mhr-derive-refineable"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "mhr-gpui"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "anyhow",
+ "async-channel",
+ "async-task",
+ "backtrace",
+ "bindgen",
+ "bitflags 2.13.1",
+ "chrono",
+ "core-video",
+ "criterion",
+ "ctor",
+ "derive_more",
+ "embed-resource",
+ "etagere",
+ "futures",
+ "futures-concurrency",
+ "getrandom 0.3.4",
+ "hdrhistogram",
+ "heapless",
+ "image",
+ "inventory",
+ "itertools 0.14.0",
+ "libc",
+ "log",
+ "lyon",
+ "mhr-bench-metrics",
+ "mhr-collections",
+ "mhr-gpui-macros",
+ "mhr-gpui-shared-string",
+ "mhr-gpui-util",
+ "mhr-http-client",
+ "mhr-refineable",
+ "mhr-scheduler",
+ "mhr-sum-tree",
+ "mhr-util-macros",
+ "num_cpus",
+ "objc2 0.6.3",
+ "objc2-core-foundation",
+ "objc2-core-video",
+ "objc2-metal 0.3.2",
+ "parking",
+ "parking_lot",
+ "pin-project",
+ "pollster 0.4.0",
+ "postage",
+ "profiling",
+ "proptest",
+ "rand 0.9.4",
+ "raw-window-handle",
+ "regex",
+ "resvg",
+ "schemars",
+ "seahash",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "smallvec",
+ "spin 0.10.0",
+ "stacksafe",
+ "strum",
+ "taffy",
+ "thiserror 2.0.17",
+ "ttf-parser",
+ "url",
+ "usvg",
+ "uuid",
+ "waker-fn",
+ "web-time",
+ "windows 0.62.2",
+ "zed-font-kit",
+ "zed-scap",
+]
+
+[[package]]
+name = "mhr-gpui-apple"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-task",
+ "block2 0.6.2",
+ "cbindgen",
+ "core-foundation 0.10.0",
+ "core-graphics 0.24.0",
+ "core-video",
+ "derive_more",
+ "dispatch2",
+ "etagere",
+ "foreign-types",
+ "image",
+ "libc",
+ "log",
+ "mach2",
+ "metal",
+ "mhr-gpui",
+ "mhr-gpui-util",
+ "objc2 0.6.3",
+ "objc2-foundation 0.3.2",
+ "objc2-quartz-core 0.3.2",
+ "parking_lot",
+]
+
+[[package]]
+name = "mhr-gpui-linux"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_unix",
+ "anyhow",
+ "as-raw-xcb-connection",
+ "ashpd",
+ "bytemuck",
+ "calloop",
+ "calloop-wayland-source",
+ "filedescriptor",
+ "futures",
+ "libc",
+ "log",
+ "mhr-collections",
+ "mhr-gpui",
+ "mhr-gpui-util",
+ "mhr-gpui-wgpu",
+ "mhr-http-client",
+ "notify-rust",
+ "oo7",
+ "open",
+ "parking_lot",
+ "raw-window-handle",
+ "smallvec",
+ "smol",
+ "strum",
+ "url",
+ "uuid",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-cursor",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
+ "wayland-protocols-wlr",
+ "x11rb",
+ "xkbcommon",
+ "zed-scap",
+ "zed-xim",
+]
+
+[[package]]
+name = "mhr-gpui-macos"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_macos",
+ "anyhow",
+ "block2 0.6.2",
+ "cocoa 0.26.0",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "core-video",
+ "ctor",
+ "dispatch2",
+ "foreign-types",
+ "futures",
+ "image",
+ "itertools 0.14.0",
+ "log",
+ "mhr-collections",
+ "mhr-gpui",
+ "mhr-gpui-apple",
+ "mhr-gpui-util",
+ "mhr-scheduler",
+ "objc",
+ "objc2 0.6.3",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-graphics",
+ "objc2-core-media",
+ "objc2-foundation 0.3.2",
+ "objc2-screen-capture-kit",
+ "objc2-user-notifications",
+ "parking_lot",
+ "pathfinder_geometry",
+ "raw-window-handle",
+ "semver",
+ "smallvec",
+ "strum",
+ "uuid",
+ "zed-font-kit",
+]
+
+[[package]]
+name = "mhr-gpui-macros"
+version = "0.1.0"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "mhr-gpui-mobile"
+version = "0.1.0"
+dependencies = [
+ "android-activity",
+ "android_logger",
+ "anyhow",
+ "block2 0.6.2",
+ "core-foundation 0.10.0",
+ "core-foundation-sys",
+ "core-graphics 0.24.0",
+ "core-text",
+ "futures",
+ "jni",
+ "libc",
+ "log",
+ "mhr-gpui",
+ "mhr-gpui-wgpu",
+ "ndk",
+ "ndk-context",
+ "ndk-sys",
+ "objc2 0.6.3",
+ "parking_lot",
+ "pathfinder_geometry",
+ "raw-window-handle",
+ "rustc-hash 2.1.1",
+ "smallvec",
+ "uuid",
+ "wgpu",
+ "zed-font-kit",
+]
+
+[[package]]
+name = "mhr-gpui-platform"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "console_error_panic_hook",
+ "mhr-gpui",
+ "mhr-gpui-linux",
+ "mhr-gpui-macos",
+ "mhr-gpui-web",
+ "mhr-gpui-wgpu",
+ "mhr-gpui-windows",
+]
+
+[[package]]
+name = "mhr-gpui-screenshot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "image",
+ "mhr-gpui",
+ "mhr-gpui-wgpu",
+ "png 0.18.0",
+ "sha2",
+ "swash",
+]
+
+[[package]]
+name = "mhr-gpui-shared-string"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "smol_str",
+]
+
+[[package]]
+name = "mhr-gpui-util"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "which",
+]
+
+[[package]]
+name = "mhr-gpui-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "console_error_panic_hook",
+ "futures",
+ "js-sys",
+ "log",
+ "mhr-gpui",
+ "mhr-gpui-wgpu",
+ "mhr-http-client",
+ "mhr-scheduler",
+ "parking_lot",
+ "raw-window-handle",
+ "smallvec",
+ "unicode-properties",
+ "unicode-script",
+ "unicode-segmentation",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm_thread",
+ "web-sys",
+ "web-time",
+]
+
+[[package]]
+name = "mhr-gpui-wgpu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "cosmic-text",
+ "etagere",
+ "image",
+ "itertools 0.14.0",
+ "log",
+ "mhr-collections",
+ "mhr-gpui",
+ "mhr-gpui-util",
+ "parking_lot",
+ "profiling",
+ "raw-window-handle",
+ "smallvec",
+ "swash",
+ "unicode-bidi",
+ "unicode-segmentation",
+ "web-sys",
+ "wgpu",
+ "zed-font-kit",
+]
+
+[[package]]
+name = "mhr-gpui-windows"
+version = "0.1.0"
+dependencies = [
+ "accesskit",
+ "accesskit_windows",
+ "anyhow",
+ "dunce",
+ "etagere",
+ "futures",
+ "image",
+ "itertools 0.14.0",
+ "log",
+ "mhr-collections",
+ "mhr-gpui",
+ "mhr-gpui-util",
+ "mhr-scheduler",
+ "parking_lot",
+ "rand 0.9.4",
+ "raw-window-handle",
+ "smallvec",
+ "uuid",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
+ "windows-numerics 0.3.1",
+ "windows-registry 0.6.1",
+ "zed-scap",
+]
+
+[[package]]
+name = "mhr-http-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "bytes",
+ "derive_more",
+ "futures",
+ "http",
+ "http-body",
+ "log",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "url",
+]
+
+[[package]]
+name = "mhr-http-client-tls"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rustls",
+ "rustls-platform-verifier",
+ "webpki-roots",
+]
+
+[[package]]
+name = "mhr-perf"
+version = "0.1.0"
+dependencies = [
+ "mhr-collections",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mhr-refineable"
+version = "0.1.0"
+dependencies = [
+ "mhr-derive-refineable",
+]
+
+[[package]]
+name = "mhr-reqwest-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "futures",
+ "gpui-pre-reqwest",
+ "log",
+ "mhr-gpui-util",
+ "mhr-http-client",
+ "mhr-http-client-tls",
+ "regex",
+ "tokio",
+]
+
+[[package]]
+name = "mhr-scheduler"
+version = "0.1.0"
+dependencies = [
+ "async-task",
+ "backtrace",
+ "chrono",
+ "flume",
+ "futures",
+ "parking_lot",
+ "rand 0.9.4",
+ "wasm_thread",
+ "web-time",
+]
+
+[[package]]
+name = "mhr-sum-tree"
+version = "0.1.0"
+dependencies = [
+ "heapless",
+ "log",
+ "mhr-ztracing",
+ "proptest",
+ "rayon",
+ "tracing",
+]
+
+[[package]]
+name = "mhr-util-macros"
+version = "0.1.0"
+dependencies = [
+ "mhr-perf",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "mhr-zlog"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "log",
+ "mhr-collections",
+]
+
+[[package]]
+name = "mhr-ztracing"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "js-sys",
+ "mhr-zlog",
+ "mhr-ztracing-macro",
+ "tracing",
+ "tracing-subscriber",
+ "tracing-tracy",
+ "tracy-client",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "mhr-ztracing-macro"
+version = "0.1.0"
 
 [[package]]
 name = "mime"

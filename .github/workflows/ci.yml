@@ -20,13 +20,13 @@ env:
   # tooling leaves out their dev-dependencies, and some read fonts from Zed's
   # `assets/` folder (docs/testing.md). Every other crate's tests run.
   TEST_EXCLUDES: >-
-    --exclude gpui-pre
-    --exclude gpui-pre-macos
-    --exclude gpui-pre-macros
-    --exclude gpui-pre-sum-tree
-    --exclude gpui-pre-web
-    --exclude gpui-pre-wgpu
-    --exclude gpui-pre-zlog
+    --exclude mhr-gpui
+    --exclude mhr-gpui-macos
+    --exclude mhr-gpui-macros
+    --exclude mhr-sum-tree
+    --exclude mhr-gpui-web
+    --exclude mhr-gpui-wgpu
+    --exclude mhr-zlog
 
 # The `test` job relies on the dependency cache that
 # `actions-rust-lang/setup-rust-toolchain` installs (Swatinem/rust-cache).
@@ -43,13 +43,13 @@ jobs:
         with:
           components: rustfmt
           cache: false
-      # gpui-pre-macros holds code the release tooling generates, which
+      # mhr-gpui-macros holds code the release tooling generates, which
       # rustfmt would rewrite and later imports from upstream would then
       # conflict with (docs/upstream.md).
       - name: Check formatting
         run: |
           packages=$(cargo metadata --no-deps --format-version 1 | jq -j '
-            .packages[] | select(.name != "gpui-pre-macros") | "-p \(.name) "')
+            .packages[] | select(.name != "mhr-gpui-macros") | "-p \(.name) "')
           cargo fmt --check $packages
 
   test:
@@ -86,7 +86,7 @@ jobs:
           sudo apt-get install -y \
             libfontconfig-dev libwayland-dev libxkbcommon-x11-dev \
             libvulkan1 mesa-vulkan-drivers
-      # gpui-pre-apple's build script compiles its shaders with Xcode's Metal
+      # mhr-gpui-apple's build script compiles its shaders with Xcode's Metal
       # compiler, which Xcode 26 installs as a separate component.
       - name: Install the Metal toolchain
         if: ${{ runner.os == 'macOS' }}
@@ -100,7 +100,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --locked -- --deny warnings
       # `--tests` leaves out the examples, which need the missing
-      # dev-dependencies too, and the doc tests, where gpui-pre-mobile's are
+      # dev-dependencies too, and the doc tests, where mhr-gpui-mobile's are
       # sketches that don't compile.
       - name: Test
         run: cargo test --workspace $TEST_EXCLUDES --tests --locked

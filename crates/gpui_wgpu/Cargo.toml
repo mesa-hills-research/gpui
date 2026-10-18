@@ -1,6 +1,6 @@
 [package]
-name = "gpui-pre-wgpu"
-version = "0.3.8"
+name = "mhr-gpui-wgpu"
+version = "0.1.0"
 edition = { workspace = true }
 publish = true
 license = "Apache-2.0"

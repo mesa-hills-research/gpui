@@ -1,6 +1,6 @@
 [package]
-name = "gpui-pre-web"
-version = "0.3.8"
+name = "mhr-gpui-web"
+version = "0.1.0"
 publish = true
 edition = { workspace = true }
 license = "Apache-2.0"
