@@ -174,7 +174,9 @@ adds the same line.
   the reader scrolls onto new items. The list asks for estimates of new items, of every item after
   `ListState::remeasure`, and of every item when its width changes. An item measured at the old
   width then counts its height scaled by its estimate at the new width over its estimate at the
-  old one. The tests at the end of `list.rs` cover it.
+  old one. Items that change, after `ListState::remeasure_items` or a one-for-one `splice`, get a
+  new estimate too, so a row that grows off screen counts its new height. The tests at the end of
+  `list.rs` cover it.
 - **Cached views inside cached views stay cached**, in `mhr-gpui`'s `src/view.rs`,
   `src/window.rs` and `src/text_system/line_layout.rs`. A cached view that redrew made every
   cached view inside it redraw too, so caching a view inside another gave nothing. Such a view is
