@@ -1,0 +1,21 @@
+[package]
+name = "gpui-pre-scroll-harness"
+version = "0.1.0"
+edition = { workspace = true }
+publish = false
+license = "Apache-2.0"
+description = "Measures and films how smoothly a list's scrollbar moves while the wheel scrolls through rows of mixed heights"
+
+[[bin]]
+name = "scroll-harness"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+gif = "0.14"
+gpui = { workspace = true, features = ["test-support"] }
+gpui_screenshot = { path = "../gpui_screenshot", package = "gpui-pre-screenshot" }
+image = { workspace = true }
+
+[lints]
+workspace = true

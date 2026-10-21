@@ -2714,6 +2714,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "gpui-pre-scroll-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gif",
+ "gpui-pre",
+ "gpui-pre-screenshot",
+ "image",
+]
+
+[[package]]
 name = "gpui-pre-shared-string"
 version = "0.3.8"
 dependencies = [
