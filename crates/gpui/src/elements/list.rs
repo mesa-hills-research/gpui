@@ -2247,6 +2247,10 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for EstimatedHei
 }
 
 #[cfg(test)]
+#[path = "list_smooth_tests.rs"]
+mod smooth_tests;
+
+#[cfg(test)]
 mod test {
 
     use gpui::{ScrollDelta, ScrollWheelEvent};

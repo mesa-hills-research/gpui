@@ -179,7 +179,8 @@ adds the same line.
   width then counts its height scaled by its estimate at the new width over its estimate at the
   old one. Items that change, after `ListState::remeasure_items` or a one-for-one `splice`, get a
   new estimate too, so a row that grows off screen counts its new height. The tests at the end of
-  `list.rs` cover it.
+  `list.rs` cover it, and those in `src/elements/list_smooth_tests.rs` measure how steadily the
+  thumb moves over a transcript of mixed rows, with and without estimates.
 - **Cached views inside cached views stay cached**, in `mhr-gpui`'s `src/view.rs`,
   `src/window.rs` and `src/text_system/line_layout.rs`. A cached view that redrew made every
   cached view inside it redraw too, so caching a view inside another gave nothing. Such a view is
