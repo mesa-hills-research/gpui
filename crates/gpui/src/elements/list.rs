@@ -106,6 +106,10 @@ struct StateInner {
     /// Whether every item's estimated height is out of date, after
     /// [`ListState::remeasure`].
     reestimate: bool,
+    /// Whether the list element that drew the list last estimates item
+    /// heights, so that items that change get a new estimate rather than
+    /// keep their old height.
+    estimates: bool,
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
 }
@@ -415,6 +419,7 @@ impl ListState {
             scrollbar_anchor: None,
             measuring_behavior: ListMeasuringBehavior::default(),
             reestimate: false,
+            estimates: false,
             pending_scroll: None,
             follow_state: FollowState::default(),
         })));
@@ -503,6 +508,9 @@ impl ListState {
     /// Use this when an item's content has changed and its rendered
     /// height may be different (e.g., streaming text, tool results
     /// loading), but the item itself still exists at the same index.
+    ///
+    /// Until the items are drawn again they count their old heights, or
+    /// new estimates in a list given [`List::estimate_item_heights`].
     pub fn remeasure_items(&self, range: Range<usize>) {
         self.remeasure_items_with_scroll_anchor(range, ScrollAnchor::Absolute);
     }
@@ -549,14 +557,20 @@ impl ListState {
         }
 
         // Rebuild the tree, replacing items in the range with
-        // Unmeasured copies that keep their focus handles.
+        // Unmeasured copies that keep their focus handles. Items that changed
+        // in a list given estimates get a new estimate in the next frame.
+        let estimate_again = state.estimates && matches!(scroll_anchor, ScrollAnchor::Absolute);
         let new_items = {
             let mut cursor = state.items.cursor::<Count>(());
             let mut new_items = cursor.slice(&Count(range.start), Bias::Right);
             let invalidated = cursor.slice(&Count(range.end), Bias::Right);
             new_items.extend(
                 invalidated.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: item.size_hint(),
+                    size_hint: if estimate_again {
+                        None
+                    } else {
+                        item.size_hint()
+                    },
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -596,7 +610,8 @@ impl ListState {
     /// by `count` new items that must be recalculated.
     ///
     /// Items replaced one for one keep their old heights as estimates until
-    /// they're drawn again.
+    /// they're drawn again, or get new estimates in a list given
+    /// [`List::estimate_item_heights`].
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         self.splice_focusable(old_range, (0..count).map(|_| None))
     }
@@ -633,12 +648,13 @@ impl ListState {
 
         let spliced_count = focus_handles.len();
         if keep_heights && replaced.summary().count == spliced_count {
+            let estimates = state.estimates;
             new_items.extend(
                 replaced
                     .iter()
                     .zip(focus_handles)
                     .map(|(old, focus_handle)| ListItem::Unmeasured {
-                        size_hint: old.size_hint(),
+                        size_hint: if estimates { None } else { old.size_hint() },
                         focus_handle,
                     }),
                 (),
@@ -1997,6 +2013,7 @@ impl Element for List {
             .last_layout_bounds
             .map(|last_bounds| last_bounds.size.width)
             .filter(|width| *width != bounds.size.width);
+        state.estimates = self.estimate_height.is_some();
         if let Some(estimate) = self.estimate_height.as_mut() {
             state.estimate_item_heights(bounds.size.width, old_width, estimate, window, cx);
         } else if state
@@ -2186,7 +2203,7 @@ impl sum_tree::SeekTarget<'_, ListItemSummary, ListItemSummary> for EstimatedHei
 mod test {
 
     use gpui::{ScrollDelta, ScrollWheelEvent};
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     use crate::{
@@ -3719,6 +3736,55 @@ mod test {
         state.remeasure();
         draw(cx);
         assert_eq!(state.max_offset_for_scrollbar().y, px(100. * 40. - 200.));
+    }
+
+    #[gpui::test]
+    fn test_items_that_change_count_their_new_estimates(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // A hundred items of 20px, estimated exactly, the first few drawn.
+        struct ChangingView(ListState, Rc<RefCell<Vec<f32>>>);
+        impl Render for ChangingView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let heights = self.1.clone();
+                let estimates = self.1.clone();
+                list(self.0.clone(), move |ix, _, _| {
+                    div().h(px(heights.borrow()[ix])).w_full().into_any()
+                })
+                .estimate_item_heights(move |ix, _, _, _| px(estimates.borrow()[ix]))
+                .w_full()
+                .h_full()
+            }
+        }
+        let heights = Rc::new(RefCell::new(vec![20.; 100]));
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.));
+        let view = cx.update(|_, cx| cx.new(|_| ChangingView(state.clone(), heights.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+        assert_eq!(state.max_offset_for_scrollbar().y, px(100. * 20. - 200.));
+
+        // An item far below grows, as streaming text does, and the list
+        // counts its new estimate without drawing it.
+        heights.borrow_mut()[90] = 220.;
+        state.remeasure_items(90..91);
+        draw(cx);
+        assert_eq!(
+            state.max_offset_for_scrollbar().y,
+            px(99. * 20. + 220. - 200.)
+        );
+
+        // An item replaced one for one counts its new estimate too.
+        heights.borrow_mut()[80] = 120.;
+        state.splice(80..81, 1);
+        draw(cx);
+        assert_eq!(
+            state.max_offset_for_scrollbar().y,
+            px(98. * 20. + 220. + 120. - 200.)
+        );
     }
 
     #[gpui::test]
