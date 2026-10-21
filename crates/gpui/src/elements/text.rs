@@ -628,6 +628,22 @@ struct TextLayoutInner {
     truncate_width: Option<Pixels>,
     size: Option<Size<Pixels>>,
     bounds: Option<Bounds<Pixels>>,
+    /// The layout this one replaced, kept for when the text is measured at
+    /// that layout's wrap width again. Layout often asks for the text's
+    /// natural width and then lays it out at a narrower width.
+    replaced: Option<Box<TextLayoutInner>>,
+}
+
+impl TextLayoutInner {
+    /// Whether this layout answers a measurement at `wrap_width`. A truncated
+    /// layout answers none, since the text may fit without truncation.
+    fn answers(&self, wrap_width: Option<Pixels>) -> Option<Size<Pixels>> {
+        if self.wrap_width == wrap_width && self.truncate_width.is_none() {
+            self.size
+        } else {
+            None
+        }
+    }
 }
 
 impl TextLayout {
@@ -683,22 +699,36 @@ impl TextLayout {
                         (None, "".into(), TruncateFrom::End)
                     };
 
-                // Only use cached layout if:
+                // Only use a cached layout if:
                 // 1. We have a cached size
-                // 2. wrap_width matches (or both are None)
+                // 2. wrap_width matches, both None included. A layout wrapped at some width
+                //    doesn't answer a probe for the text's natural width.
                 // 3. truncate_width is None (if truncate_width is Some, we need to re-layout
                 //    because the previous layout may have been computed without truncation)
                 // 4. the cached layout was not truncated (a truncated layout answers an
                 //    unconstrained probe with the truncated size, which poisons intrinsic
                 //    sizing with whatever width some earlier measure pass happened to use)
-                if let Some(text_layout) = element_state.0.borrow().as_ref()
-                    && let Some(size) = text_layout.size
-                    && (wrap_width.is_none() || wrap_width == text_layout.wrap_width)
-                    && truncate_width.is_none()
-                    && text_layout.truncate_width.is_none()
+                // The layout measured last is the one painted, so a match with the layout
+                // it replaced swaps the two.
+                if truncate_width.is_none()
+                    && let Some(text_layout) = element_state.0.borrow_mut().as_mut()
                 {
-                    return size;
+                    if let Some(size) = text_layout.answers(wrap_width) {
+                        return size;
+                    }
+                    if let Some(mut replaced) = text_layout.replaced.take() {
+                        if let Some(size) = replaced.answers(wrap_width) {
+                            mem::swap(text_layout, &mut replaced);
+                            text_layout.replaced = Some(replaced);
+                            return size;
+                        }
+                        text_layout.replaced = Some(replaced);
+                    }
                 }
+                let replaced = element_state.0.borrow_mut().take().map(|mut layout| {
+                    layout.replaced = None;
+                    Box::new(layout)
+                });
 
                 let mut line_wrapper = cx.text_system().line_wrapper(text_style.font(), font_size);
                 let (text, runs) = if let Some(truncate_width) = truncate_width {
@@ -761,6 +791,7 @@ impl TextLayout {
                         truncate_width,
                         size: Some(Size::default()),
                         bounds: None,
+                        replaced,
                     });
                     return Size::default();
                 };
@@ -780,6 +811,7 @@ impl TextLayout {
                     truncate_width,
                     size: Some(size),
                     bounds: None,
+                    replaced,
                 });
 
                 size
@@ -1316,6 +1348,202 @@ impl IntoElement for InteractiveText {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        AvailableSpace, Context, InteractiveElement as _, ParentElement as _, Render, Styled as _,
+        TestAppContext, div, px, relative, size, window::DrawPhase,
+    };
+
+    const SENTENCE: &str = "one two three four five six";
+
+    /// Measures `layout` as the root of a layout, in `width`.
+    fn measure(
+        layout: &TextLayout,
+        width: AvailableSpace,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Size<Pixels> {
+        let layout_id = layout.layout(SENTENCE.into(), None, window, cx);
+        window.compute_layout(layout_id, size(width, AvailableSpace::MinContent), cx);
+        window.layout_bounds(layout_id).size
+    }
+
+    #[gpui::test]
+    fn text_measured_without_a_width_after_wrapping_takes_its_natural_size(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            window.invalidator.set_phase(DrawPhase::Prepaint);
+            let natural = measure(
+                &TextLayout::default(),
+                AvailableSpace::MaxContent,
+                window,
+                cx,
+            );
+
+            let layout = TextLayout::default();
+            let wrapped = measure(&layout, AvailableSpace::Definite(px(40.)), window, cx);
+            assert!(wrapped.width <= px(40.) && wrapped.height > natural.height);
+            assert_eq!(
+                measure(&layout, AvailableSpace::MaxContent, window, cx),
+                natural
+            );
+            // The lines it paints are the ones it measured last.
+            assert_eq!(layout.wrapped_text(), SENTENCE);
+
+            assert_eq!(
+                measure(&layout, AvailableSpace::Definite(px(40.)), window, cx),
+                wrapped
+            );
+            assert_eq!(
+                layout.wrapped_text().lines().count() as f32,
+                wrapped.height / layout.line_height()
+            );
+            window.invalidator.set_phase(DrawPhase::None);
+        });
+    }
+
+    /// Draws the same `StyledText` every frame, as an element that keeps its
+    /// layout from one frame to the next does.
+    struct RetainedText(Rc<RefCell<StyledText>>);
+
+    impl IntoElement for RetainedText {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for RetainedText {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, ()) {
+            self.0
+                .borrow_mut()
+                .request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            request_layout: &mut (),
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.0
+                .borrow_mut()
+                .prepaint(id, inspector_id, bounds, request_layout, window, cx)
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            request_layout: &mut (),
+            prepaint: &mut (),
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.0.borrow_mut().paint(
+                id,
+                inspector_id,
+                bounds,
+                request_layout,
+                prepaint,
+                window,
+                cx,
+            )
+        }
+    }
+
+    /// A message at the right of the window, as wide as its text up to half
+    /// the window.
+    struct MessageView {
+        text: Rc<RefCell<StyledText>>,
+    }
+
+    impl Render for MessageView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_row()
+                .w_full()
+                .items_start()
+                .child(
+                    div()
+                        .flex_grow(1000.)
+                        .flex_basis(px(0.))
+                        .max_w(relative(0.5)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_grow(1.)
+                        .flex_basis(px(40.))
+                        .min_w_0()
+                        .items_end()
+                        .child(
+                            div().flex().flex_row().w_full().justify_end().child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .min_w_0()
+                                    .debug_selector(|| "message".into())
+                                    .child(RetainedText(self.text.clone())),
+                            ),
+                        ),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn a_message_grows_to_its_text_natural_width_when_the_window_widens(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| MessageView {
+            text: Rc::new(RefCell::new(StyledText::new(SENTENCE))),
+        });
+        let natural = cx.update(|window, cx| {
+            window.invalidator.set_phase(DrawPhase::Prepaint);
+            let width = measure(
+                &TextLayout::default(),
+                AvailableSpace::MaxContent,
+                window,
+                cx,
+            )
+            .width;
+            window.invalidator.set_phase(DrawPhase::None);
+            width
+        });
+
+        cx.simulate_resize(size(px(200.), px(400.)));
+        cx.run_until_parked();
+        let narrow = cx.debug_bounds("message").expect("message is drawn");
+        assert!(narrow.size.width < natural);
+
+        cx.simulate_resize(size(px(1000.), px(400.)));
+        cx.run_until_parked();
+        let wide = cx.debug_bounds("message").expect("message is drawn");
+        assert_eq!(wide.size.width, natural);
+    }
 
     #[test]
     fn test_into_element_for() {
