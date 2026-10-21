@@ -35,8 +35,10 @@ cost of the frame after each step and the rows it measured, and the memory a lis
 `trace-<scenario>.tsv` has every step and `chart-<scenario>.png` plots them. `--film` adds a
 contact sheet (`film-<scenario>.png`) and a GIF of the frames around the largest step.
 
-`--frames N` draws idle frames between steps, for changes that animate the thumb or measure rows
-ahead. Frame costs depend on the build, so compare them between runs of the same profile.
+`--frames N` gives each step N frames, the one after the step and idle ones, for changes that
+animate the thumb or measure rows ahead. An idle frame draws only if something asked for a frame,
+as `Window::request_animation_frame` does, unless `--refresh-idle` redraws every one. Frame costs
+depend on the build, so compare them between runs of the same profile.
 
 ## Trying a change to the list
 

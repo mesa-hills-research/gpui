@@ -136,9 +136,13 @@ pub struct Options {
     pub medium_turns: usize,
     pub short_turns: usize,
     pub seed: u64,
-    /// Frames drawn for each step of the wheel, the one after the step
-    /// and then idle ones.
+    /// Frames for each step of the wheel, the one after the step and then
+    /// idle ones.
     pub frames_per_step: usize,
+    /// Whether idle frames redraw the window, as when an animation runs
+    /// elsewhere in it. Otherwise they draw only when something asked for a
+    /// frame, such as `Window::request_animation_frame`.
+    pub refresh_idle: bool,
 }
 
 /// The list and its scrollbar after one step of the wheel.
@@ -348,9 +352,13 @@ pub fn run(
             draws.set(0);
             // In GPUI's test mode a window that an update leaves dirty is
             // drawn as the update's effects are flushed, so the frame after
-            // the wheel event is drawn within this update.
+            // the wheel event is drawn within this update, after the
+            // callbacks the last frame asked to run before the next one.
+            app.advance_clock(FRAME);
+            app.run_until_parked();
             let started = Instant::now();
             let event_ns = app.update_window(any_window, |_, window, cx| {
+                window.simulate_next_frame(cx);
                 let started = Instant::now();
                 window.dispatch_event(
                     ScrollWheelEvent {
@@ -378,7 +386,12 @@ pub fn run(
                 app.advance_clock(FRAME);
                 app.run_until_parked();
                 let started = Instant::now();
-                app.update_window(any_window, |_, window, _| window.refresh())?;
+                app.update_window(any_window, |_, window, cx| {
+                    window.simulate_next_frame(cx);
+                    if options.refresh_idle {
+                        window.refresh();
+                    }
+                })?;
                 idle_ns += started.elapsed().as_nanos() as u64;
                 frames.push(Frame {
                     step: step_ix,

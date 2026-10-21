@@ -5,7 +5,8 @@
 //! ```text
 //! cargo run -p mhr-gpui-scroll-harness -- --out DIR [--label NAME]
 //!     [--scenarios tail,head,medium,tail-list,resize,short] [--film tail[:LEG],...]
-//!     [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N]
+//!     [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N]
+//!     [--frames N] [--refresh-idle]
 //! ```
 //!
 //! It writes `report.txt` (also printed), and for each scenario a trace of
@@ -101,7 +102,7 @@ struct Args {
     options: Options,
 }
 
-const USAGE: &str = "Usage\n  scroll-harness --out DIR [--label NAME] [--scenarios a,b] [--film a[:leg],b] [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N]";
+const USAGE: &str = "Usage\n  scroll-harness --out DIR [--label NAME] [--scenarios a,b] [--film a[:leg],b] [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N] [--refresh-idle]";
 
 fn parse() -> Result<Args> {
     let mut args = Args {
@@ -116,6 +117,7 @@ fn parse() -> Result<Args> {
             short_turns: 5,
             seed: 7,
             frames_per_step: 1,
+            refresh_idle: false,
         },
     };
     let mut given = std::env::args().skip(1);
@@ -141,6 +143,7 @@ fn parse() -> Result<Args> {
             "--short-turns" => args.options.short_turns = value()?.parse()?,
             "--seed" => args.options.seed = value()?.parse()?,
             "--frames" => args.options.frames_per_step = value()?.parse()?,
+            "--refresh-idle" => args.options.refresh_idle = true,
             "--help" | "-h" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -226,8 +229,16 @@ fn main() -> Result<()> {
     let mut header = String::new();
     let _ = writeln!(
         header,
-        "scroll-harness  label {}  commit {}  profile {}  frames a step {}",
-        args.label, commit, profile, options.frames_per_step
+        "scroll-harness  label {}  commit {}  profile {}  frames a step {}{}",
+        args.label,
+        commit,
+        profile,
+        options.frames_per_step,
+        if options.refresh_idle {
+            ", idle frames redraw"
+        } else {
+            ""
+        }
     );
     let _ = writeln!(
         header,
