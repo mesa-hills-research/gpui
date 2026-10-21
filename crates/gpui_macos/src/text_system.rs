@@ -133,6 +133,13 @@ impl PlatformTextSystem for MacTextSystem {
         names
     }
 
+    fn has_font_family(&self, name: &str) -> bool {
+        let name = gpui::font_name_with_fallbacks(name, ".AppleSystemUIFont");
+        let state = self.0.read();
+        state.memory_source.select_family_by_name(name).is_ok()
+            || state.system_source.select_family_by_name(name).is_ok()
+    }
+
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {

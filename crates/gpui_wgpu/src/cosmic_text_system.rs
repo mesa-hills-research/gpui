@@ -251,6 +251,16 @@ impl PlatformTextSystem for CosmicTextSystem {
         result
     }
 
+    fn has_font_family(&self, name: &str) -> bool {
+        let state = self.0.read();
+        let name = gpui::font_name_with_fallbacks(name, &state.system_font_fallback);
+        state
+            .font_system
+            .db()
+            .faces()
+            .any(|face| face.families.iter().any(|family| family.0 == name))
+    }
+
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let mut state = self.0.write();
         let key = FontKey::new(

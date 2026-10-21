@@ -242,6 +242,10 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.state.read().all_font_names(&self.components)
     }
 
+    fn has_font_family(&self, name: &str) -> bool {
+        self.state.read().has_font_family(&self.components, name)
+    }
+
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.state.upgradable_read();
         if let Some(font_id) = lock.font_to_font_id.get(font) {
@@ -1280,6 +1284,28 @@ impl DirectWriteState {
                 height: 0.0,
             })
         }
+    }
+
+    /// Whether the added fonts or the system's have the family, looked up as
+    /// [`Self::make_font_from_font_collection`] looks a font's family up.
+    fn has_font_family(&self, components: &DirectWriteComponents, name: &str) -> bool {
+        let family = gpui::font_name_with_fallbacks(name, &components.system_ui_font_name);
+        let family = HSTRING::from(family);
+        [&self.custom_font_collection, &self.system_font_collection]
+            .into_iter()
+            .any(|collection| unsafe {
+                collection
+                    .GetFontSet()
+                    .and_then(|font_set| {
+                        font_set.GetMatchingFonts(
+                            &family,
+                            DWRITE_FONT_WEIGHT_NORMAL,
+                            DWRITE_FONT_STRETCH_NORMAL,
+                            DWRITE_FONT_STYLE_NORMAL,
+                        )
+                    })
+                    .is_ok_and(|fonts| fonts.GetFontCount() > 0)
+            })
     }
 
     fn all_font_names(&self, components: &DirectWriteComponents) -> Vec<String> {

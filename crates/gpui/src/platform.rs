@@ -1497,6 +1497,12 @@ pub trait PlatformTextSystem: Send + Sync {
     fn set_missing_glyph_sink(&self, _sink: Option<Arc<dyn MissingGlyphSink>>) {}
     /// Get all available font names.
     fn all_font_names(&self) -> Vec<String>;
+    /// Whether a font family of this name is available, found the way [`Self::font_id`] finds
+    /// a font's family. Text systems that can look one family up override this, and the default
+    /// searches [`Self::all_font_names`] for the exact name.
+    fn has_font_family(&self, name: &str) -> bool {
+        self.all_font_names().iter().any(|family| family == name)
+    }
     /// Get the font ID for a font descriptor.
     fn font_id(&self, descriptor: &Font) -> Result<FontId>;
     /// Prewarm any system font caches needed to shape text.

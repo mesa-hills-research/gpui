@@ -136,6 +136,14 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
   out without wrapping, and keeps the layout it replaced, so text measured at its natural width
   and then laid out at a narrower one, frame after frame, is laid out once at each width. The
   tests at the end of `text.rs` cover it.
+- **A check for one font family**, `TextSystem::has_font_family`, in `gpui-pre`'s
+  `src/text_system.rs` and `src/platform.rs`, with lookups in `gpui-pre-wgpu`'s
+  `src/cosmic_text_system.rs`, `gpui-pre-windows`' `src/direct_write.rs` and `gpui-pre-macos`'
+  `src/text_system.rs`. Finding out whether a family was installed meant listing every family
+  with `all_font_names`. The new method finds the family the way a `Font`'s family is found, and
+  other platform text systems search `all_font_names` by default. `gpui-pre-apple`'s copy of
+  `platform.rs` under `vendor/gpui` follows the original.
+  `crates/gpui_screenshot/tests/font_families.rs` covers it on Linux.
 
 ## The mobile crate
 
