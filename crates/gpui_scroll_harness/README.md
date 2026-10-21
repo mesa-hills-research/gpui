@@ -37,11 +37,13 @@ contact sheet (`film-<scenario>.png`) and a GIF of the frames around the largest
 
 `--frames N` gives each step N frames, the one after the step and idle ones, for changes that
 animate the thumb or measure rows ahead. An idle frame draws only if something asked for a frame,
-as `Window::request_animation_frame` does, unless `--refresh-idle` redraws every one. Frame costs
-depend on the build, so compare them between runs of the same profile.
+as `Window::request_animation_frame` does, unless `--refresh-idle` redraws every one. `--settle N`
+gives the window N idle frames after it opens, before the first step. Frame costs depend on the
+build, so compare them between runs of the same profile.
 
 ## Trying a change to the list
 
 A change to `ListState` that needs something from the list's user, such as height estimates, gets
 it in `src/adopt.rs`, which sees each row's kind, text and line count, and the rows' real heights
-for bounds and for hints with a set error.
+for bounds and for hints with a set error. `adopt::element` gets the `List` element in each frame,
+for an API on the element.

@@ -143,6 +143,9 @@ pub struct Options {
     /// elsewhere in it. Otherwise they draw only when something asked for a
     /// frame, such as `Window::request_animation_frame`.
     pub refresh_idle: bool,
+    /// Idle frames after the window opens, before the first step, as when
+    /// a reader looks at the list before scrolling it.
+    pub settle_frames: usize,
 }
 
 /// The list and its scrollbar after one step of the wheel.
@@ -210,6 +213,22 @@ pub fn measure(app: &mut ScreenshotApp, rows: &Rc<Vec<Row>>, width: f32) -> Resu
     let heights = heights.take();
     anyhow::ensure!(heights.len() == rows.len(), "the rows weren't measured");
     Ok(heights)
+}
+
+/// An idle frame: the clock moves on by a frame, and the window draws if
+/// something asked for a frame (or always, with `refresh`). Returns how long
+/// it took, in ns.
+fn idle_frame(app: &mut ScreenshotApp, window: AnyWindowHandle, refresh: bool) -> Result<u64> {
+    app.advance_clock(FRAME);
+    app.run_until_parked();
+    let started = Instant::now();
+    app.update_window(window, |_, window, cx| {
+        window.simulate_next_frame(cx);
+        if refresh {
+            window.refresh();
+        }
+    })?;
+    Ok(started.elapsed().as_nanos() as u64)
 }
 
 /// Draws a frame of `window` and returns how long it took, in ns.
@@ -282,6 +301,9 @@ pub fn run(
     let any_window: AnyWindowHandle = window.into();
     draw(app, any_window)?;
     draw(app, any_window)?;
+    for _ in 0..options.settle_frames {
+        idle_frame(app, any_window, options.refresh_idle)?;
+    }
     let (renders, draws, thumb) = app
         .update(|cx| {
             window
@@ -385,14 +407,7 @@ pub fn run(
             for _ in 1..options.frames_per_step.max(1) {
                 app.advance_clock(FRAME);
                 app.run_until_parked();
-                let started = Instant::now();
-                app.update_window(any_window, |_, window, cx| {
-                    window.simulate_next_frame(cx);
-                    if options.refresh_idle {
-                        window.refresh();
-                    }
-                })?;
-                idle_ns += started.elapsed().as_nanos() as u64;
+                idle_ns += idle_frame(app, any_window, options.refresh_idle)?;
                 frames.push(Frame {
                     step: step_ix,
                     thumb: thumb.get(),

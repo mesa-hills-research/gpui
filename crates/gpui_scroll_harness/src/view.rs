@@ -122,10 +122,13 @@ impl Render for Harness {
         self.draws.set(self.draws.get() + 1);
         let rows = self.rows.clone();
         let renders = self.renders.clone();
-        let rows_list = list(self.list.clone(), move |ix, _, _| {
-            renders.set(renders.get() + 1);
-            render_row(&rows[ix], ix)
-        })
+        let rows_list = crate::adopt::element(
+            list(self.list.clone(), move |ix, _, _| {
+                renders.set(renders.get() + 1);
+                render_row(&rows[ix], ix)
+            }),
+            &self.rows,
+        )
         .size_full()
         .py(px(PADDING));
         let mut viewport = div()

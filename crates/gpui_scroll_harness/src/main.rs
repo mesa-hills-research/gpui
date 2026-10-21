@@ -6,7 +6,7 @@
 //! cargo run -p mhr-gpui-scroll-harness -- --out DIR [--label NAME]
 //!     [--scenarios tail,head,medium,tail-list,resize,short] [--film tail[:LEG],...]
 //!     [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N]
-//!     [--frames N] [--refresh-idle]
+//!     [--frames N] [--refresh-idle] [--settle N]
 //! ```
 //!
 //! It writes `report.txt` (also printed), and for each scenario a trace of
@@ -102,7 +102,7 @@ struct Args {
     options: Options,
 }
 
-const USAGE: &str = "Usage\n  scroll-harness --out DIR [--label NAME] [--scenarios a,b] [--film a[:leg],b] [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N] [--refresh-idle]";
+const USAGE: &str = "Usage\n  scroll-harness --out DIR [--label NAME] [--scenarios a,b] [--film a[:leg],b] [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N] [--refresh-idle] [--settle N]";
 
 fn parse() -> Result<Args> {
     let mut args = Args {
@@ -118,6 +118,7 @@ fn parse() -> Result<Args> {
             seed: 7,
             frames_per_step: 1,
             refresh_idle: false,
+            settle_frames: 0,
         },
     };
     let mut given = std::env::args().skip(1);
@@ -144,6 +145,7 @@ fn parse() -> Result<Args> {
             "--seed" => args.options.seed = value()?.parse()?,
             "--frames" => args.options.frames_per_step = value()?.parse()?,
             "--refresh-idle" => args.options.refresh_idle = true,
+            "--settle" => args.options.settle_frames = value()?.parse()?,
             "--help" | "-h" => {
                 println!("{USAGE}");
                 std::process::exit(0);
@@ -229,7 +231,7 @@ fn main() -> Result<()> {
     let mut header = String::new();
     let _ = writeln!(
         header,
-        "scroll-harness  label {}  commit {}  profile {}  frames a step {}{}",
+        "scroll-harness  label {}  commit {}  profile {}  frames a step {}{}, idle frames after opening {}",
         args.label,
         commit,
         profile,
@@ -238,7 +240,8 @@ fn main() -> Result<()> {
             ", idle frames redraw"
         } else {
             ""
-        }
+        },
+        options.settle_frames,
     );
     let _ = writeln!(
         header,

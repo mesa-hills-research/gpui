@@ -7,7 +7,9 @@
 //! characters, its lines of code) unless the candidate is meant as a bound,
 //! such as exact heights given up front.
 
-use gpui::{ListState, Pixels};
+use std::rc::Rc;
+
+use gpui::{List, ListState, Pixels};
 
 use crate::transcript::{Rng, Row};
 
@@ -37,3 +39,9 @@ impl Facts<'_> {
 /// Called after the list's state is made, and again after the list's width
 /// changes, with what the app knows about its rows then.
 pub fn adopt(_state: &ListState, _facts: &Facts) {}
+
+/// Called with the list element in every frame, for a candidate whose API
+/// is on the element rather than on its state.
+pub fn element(list: List, _rows: &Rc<Vec<Row>>) -> List {
+    list
+}
