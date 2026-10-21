@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use anyhow::anyhow;
 use cocoa::appkit::CGFloat;
 use collections::{HashMap, HashSet};
@@ -131,6 +132,13 @@ impl PlatformTextSystem for MacTextSystem {
             names.extend(fonts_in_memory);
         }
         names
+    }
+
+    fn has_font_family(&self, name: &str) -> bool {
+        let name = gpui::font_name_with_fallbacks(name, ".AppleSystemUIFont");
+        let state = self.0.read();
+        state.memory_source.select_family_by_name(name).is_ok()
+            || state.system_source.select_family_by_name(name).is_ok()
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {

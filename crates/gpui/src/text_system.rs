@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 mod font_fallbacks;
 mod font_features;
 mod line;
@@ -286,6 +287,14 @@ impl TextSystem {
         names.sort_unstable();
         names.dedup();
         names
+    }
+
+    /// Whether a font family of this name is available, among the platform's fonts and the ones
+    /// registered with [`Self::add_fonts`]. The name is matched the way a [`Font`]'s family is,
+    /// exactly on Linux and without regard to case on Windows. On Linux, Windows and macOS this
+    /// looks the one family up, which costs far less than [`Self::all_font_names`].
+    pub fn has_font_family(&self, name: &str) -> bool {
+        self.platform_text_system.has_font_family(name)
     }
 
     /// Add a font's data to the text system.
