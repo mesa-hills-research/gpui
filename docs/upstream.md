@@ -122,6 +122,14 @@ The worked example is 0.3.8, which needed Zed `279fe070`, gpui-kit `42fbb97` and
   its place, and both ends of the track are the ends of the list. A dragged thumb keeps its size
   and stays under the pointer. Wheel and track scrolling through `set_offset_from_scrollbar` moves
   the list by the distance asked. The tests at the end of `list.rs` cover it.
+- **Cached views inside cached views stay cached**, in `gpui-pre`'s `src/view.rs`,
+  `src/window.rs` and `src/text_system/line_layout.rs`. A cached view that redrew made every
+  cached view inside it redraw too, so caching a view inside another gave nothing. Such a view is
+  now reused when the view around it redraws, unless it was notified or its bounds, content mask
+  or text style changed. The cached views inside a view reused whole move with it in the frame,
+  and a view is reused only from what it drew in the previous frame, so a cached view under an
+  element that was hidden for a frame draws again when it shows. The tests at the end of
+  `view.rs` cover it.
 
 ## The mobile crate
 
