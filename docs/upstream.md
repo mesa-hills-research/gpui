@@ -216,6 +216,9 @@ git -C <gpui-mobile clone> format-patch --stdout 9075e3a..origin/main -- . ':!.g
 
 Skip upstream's "Bump gpui-pre" commits, since the workspace sets that version.
 
+In `src/momentum.rs`, the velocity tracker's test gives its samples their own times instead of
+sleeping between them, because sleeps overshoot on busy CI runners and the test failed there.
+
 ## Formatting
 
 Format only the files you change, with `cargo fmt -p mhr-gpui-mobile` or `rustfmt <file>`.

@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 //! Momentum scrolling (inertia / fling) for touch-based platforms.
 //!
 //! When a user drags their finger across the screen and lifts it, native
@@ -108,11 +109,12 @@ impl VelocityTracker {
 
     /// Record a touch position.  Call on every move event.
     pub fn record(&mut self, x: f32, y: f32) {
-        self.samples[self.index] = Some(Sample {
-            x,
-            y,
-            time: Instant::now(),
-        });
+        self.record_at(x, y, Instant::now());
+    }
+
+    /// Record a touch position taken at `time`.
+    fn record_at(&mut self, x: f32, y: f32, time: Instant) {
+        self.samples[self.index] = Some(Sample { x, y, time });
         self.index = (self.index + 1) % MAX_SAMPLES;
         self.count += 1;
     }
@@ -124,8 +126,11 @@ impl VelocityTracker {
     /// emphasizes the most recent (fastest) portion of the gesture.
     /// Returns `(vx, vy)`.
     pub fn velocity(&self) -> (f32, f32) {
-        let now = Instant::now();
+        self.velocity_at(Instant::now())
+    }
 
+    /// The release velocity as it stands at `now`.
+    fn velocity_at(&self, now: Instant) -> (f32, f32) {
         // Collect recent samples within the velocity window.
         let mut recent: Vec<&Sample> = Vec::with_capacity(MAX_SAMPLES);
         for s in self.samples.iter().flatten() {
@@ -419,18 +424,19 @@ mod tests {
     #[test]
     fn velocity_tracker_multiple_samples() {
         let mut tracker = VelocityTracker::new();
-        // Simulate a ~1000 px/s vertical scroll by recording samples
-        // spaced ~5 ms apart.
+        // A 1000 px/s vertical scroll, sampled every 5 ms. The samples
+        // carry their own times, so the test doesn't depend on how long
+        // sleeping takes on a busy machine.
+        let start = Instant::now();
+        let at = |ms: u64| start + Duration::from_millis(ms);
         for i in 0..10 {
-            tracker.record(100.0, 100.0 + i as f32 * 5.0);
-            thread::sleep(Duration::from_millis(5));
+            tracker.record_at(100.0, 100.0 + i as f32 * 5.0, at(i * 5));
         }
-        let (_vx, vy) = tracker.velocity();
-        // We expect vy roughly around 1000 px/s (5 px / 5 ms = 1000 px/s).
-        // Allow very generous tolerance because thread::sleep is extremely
-        // imprecise on CI runners (5 ms sleeps can actually take 30-50 ms).
-        assert!(vy.abs() > 50.0, "vy={vy} should be > 50 px/s");
-        assert!(vy > 0.0, "vy should be positive (scrolling down)");
+        let (vx, vy) = tracker.velocity_at(at(45));
+        assert!(vx.abs() < 1.0, "vx={vx} should be 0 px/s");
+        assert!((vy - 1000.0).abs() < 1.0, "vy={vy} should be 1000 px/s");
+        // Samples older than the velocity window no longer count.
+        assert_eq!(tracker.velocity_at(at(500)), (0.0, 0.0));
     }
 
     #[test]
