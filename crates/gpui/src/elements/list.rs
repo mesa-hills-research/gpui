@@ -25,6 +25,7 @@ use sum_tree::{Bias, Dimensions, SumTree};
 const THUMB_LEAD: f32 = 0.5;
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
+type EstimateHeightFn = dyn FnMut(usize, Pixels, &mut Window, &mut App) -> Pixels + 'static;
 
 /// Construct a new list element
 pub fn list(
@@ -34,6 +35,7 @@ pub fn list(
     List {
         state,
         render_item: Box::new(render_item),
+        estimate_height: None,
         style: StyleRefinement::default(),
         sizing_behavior: ListSizingBehavior::default(),
     }
@@ -43,6 +45,7 @@ pub fn list(
 pub struct List {
     state: ListState,
     render_item: Box<RenderItemFn>,
+    estimate_height: Option<Box<EstimateHeightFn>>,
     style: StyleRefinement,
     sizing_behavior: ListSizingBehavior,
 }
@@ -51,6 +54,29 @@ impl List {
     /// Set the sizing behavior for the list.
     pub fn with_sizing_behavior(mut self, behavior: ListSizingBehavior) -> Self {
         self.sizing_behavior = behavior;
+        self
+    }
+
+    /// Estimate the height of the items the list hasn't measured at its
+    /// width with `estimate`, which gets an item's index and a width.
+    ///
+    /// The list's scrollbar counts these estimates for the items it hasn't
+    /// drawn, so the closer they are, the more evenly the thumb moves and
+    /// the less its size changes as the reader scrolls onto new items. An
+    /// estimate should be cheap, made from what's known about the item
+    /// without laying it out, such as its lines of text times their height.
+    ///
+    /// The list asks for estimates of new items, of every item after
+    /// [`ListState::remeasure`], and when its width changes. An item it
+    /// measured at the old width then counts its height scaled by its
+    /// estimate at the new width over its estimate at the old one, so an
+    /// estimate that's off by a share for an item is corrected by its
+    /// measured height.
+    pub fn estimate_item_heights(
+        mut self,
+        estimate: impl FnMut(usize, Pixels, &mut Window, &mut App) -> Pixels + 'static,
+    ) -> Self {
+        self.estimate_height = Some(Box::new(estimate));
         self
     }
 }
@@ -78,6 +104,9 @@ struct StateInner {
     scrollbar_drag: Option<ScrollbarDrag>,
     scrollbar_anchor: Option<ScrollbarAnchor>,
     measuring_behavior: ListMeasuringBehavior,
+    /// Whether every item's estimated height is out of date, after
+    /// [`ListState::remeasure`].
+    reestimate: bool,
     pending_scroll: Option<PendingScroll>,
     follow_state: FollowState,
 }
@@ -386,6 +415,7 @@ impl ListState {
             scrollbar_drag: None,
             scrollbar_anchor: None,
             measuring_behavior: ListMeasuringBehavior::default(),
+            reestimate: false,
             pending_scroll: None,
             follow_state: FollowState::default(),
         })));
@@ -464,6 +494,7 @@ impl ListState {
     pub fn remeasure(&self) {
         let count = self.item_count();
         self.remeasure_items_with_scroll_anchor(0..count, ScrollAnchor::Proportional);
+        self.0.borrow_mut().reestimate = true;
     }
 
     /// Mark items in `range` as needing remeasurement while preserving
@@ -1270,6 +1301,91 @@ impl StateInner {
         self.items = SumTree::from_iter(measured_items, ());
     }
 
+    /// Gives the items the list hasn't measured at `width` an estimated
+    /// height. That's every item when the width changed from `old_width`
+    /// or after a remeasure, and otherwise the items with no height yet.
+    fn estimate_item_heights(
+        &mut self,
+        width: Pixels,
+        old_width: Option<Pixels>,
+        estimate: &mut EstimateHeightFn,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let hint = |height: Pixels| Some(size(px(0.), height.max(px(0.))));
+        if old_width.is_some() || self.reestimate || self.last_layout_bounds.is_none() {
+            self.reestimate = false;
+            let items: Vec<ListItem> = self
+                .items
+                .iter()
+                .enumerate()
+                .map(|(ix, item)| {
+                    let focus_handle = item.focus_handle();
+                    match (item, old_width) {
+                        (ListItem::Measured { size, .. }, None) => ListItem::Measured {
+                            size: *size,
+                            focus_handle,
+                        },
+                        // Measured at the old width, it counts its height
+                        // scaled by its estimates.
+                        (ListItem::Measured { size, .. }, Some(old_width)) => {
+                            let before = estimate(ix, old_width, window, cx);
+                            let after = estimate(ix, width, window, cx);
+                            let height = if before > px(0.) {
+                                size.height * (after / before)
+                            } else {
+                                after
+                            };
+                            ListItem::Unmeasured {
+                                size_hint: hint(height),
+                                focus_handle,
+                            }
+                        }
+                        (ListItem::Unmeasured { .. }, _) => ListItem::Unmeasured {
+                            size_hint: hint(estimate(ix, width, window, cx)),
+                            focus_handle,
+                        },
+                    }
+                })
+                .collect();
+            self.items = SumTree::from_iter(items, ());
+            if old_width.is_some() {
+                self.measuring_behavior.reset();
+            }
+            return;
+        }
+        if self.items.summary().unknown_count == 0 {
+            return;
+        }
+        let mut unknown = Vec::new();
+        let mut cursor = self
+            .items
+            .filter::<_, Count>((), |summary| summary.unknown_count > 0);
+        cursor.next();
+        while cursor.item().is_some() {
+            unknown.push(cursor.start().0);
+            cursor.next();
+        }
+        drop(cursor);
+        let mut cursor = self.items.cursor::<Count>(());
+        let mut new_items = SumTree::default();
+        for ix in unknown {
+            new_items.append(cursor.slice(&Count(ix), Bias::Right), ());
+            let focus_handle = cursor.item().and_then(|item| item.focus_handle());
+            new_items.push(
+                ListItem::Unmeasured {
+                    size_hint: hint(estimate(ix, width, window, cx)),
+                    focus_handle,
+                },
+                (),
+            );
+            cursor.next();
+        }
+        new_items.append(cursor.suffix(), ());
+        drop(cursor);
+        self.items = new_items;
+    }
+
     fn layout_items(
         &mut self,
         available_width: Option<Pixels>,
@@ -1876,8 +1992,15 @@ impl Element for List {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
         // If the width of the list has changed, invalidate all cached item
-        // heights. They stay as estimates until the items are measured again.
-        if state
+        // heights. They stay as estimates until the items are measured again,
+        // or give way to the estimates the list was given.
+        let old_width = state
+            .last_layout_bounds
+            .map(|last_bounds| last_bounds.size.width)
+            .filter(|width| *width != bounds.size.width);
+        if let Some(estimate) = self.estimate_height.as_mut() {
+            state.estimate_item_heights(bounds.size.width, old_width, estimate, window, cx);
+        } else if state
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
@@ -3448,6 +3571,119 @@ mod test {
             assert!(moves.step <= moves.median * 3. + 1., "{moves:?}");
             assert!(moves.resize <= 0.05, "{moves:?}");
         }
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_counts_estimates_for_items_not_drawn(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // 400 items of 20px to 578px, estimated exactly, drawn from the end.
+        struct EstimatedView(ListState);
+        impl Render for EstimatedView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |ix, _, _| {
+                    div().h(px(mixed_height(ix))).w_full().into_any()
+                })
+                .estimate_item_heights(|ix, _, _, _| px(mixed_height(ix)))
+                .w_full()
+                .h_full()
+            }
+        }
+        let state = ListState::new(400, crate::ListAlignment::Top, px(100.));
+        state.set_follow_mode(FollowMode::Tail);
+        let view = cx.update(|_, cx| cx.new(|_| EstimatedView(state.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+
+        // The range is the items' height from the first frame.
+        let height: f32 = (0..400).map(mixed_height).sum();
+        assert_eq!(state.max_offset_for_scrollbar().y, px(height - 300.));
+
+        // And the thumb moves the same way at each step up to the start.
+        let mut up = vec![thumb(&state)];
+        while up.last().unwrap().fraction > 0. && up.len() < 10_000 {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(50.), px(150.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(60.))),
+                ..Default::default()
+            });
+            draw(cx);
+            up.push(thumb(&state));
+        }
+        let moves = thumb_moves(&up, false, 300.);
+        eprintln!("up {} frames: {moves:?}", up.len());
+        assert!(moves.back <= 0.01, "{moves:?}");
+        assert!(moves.step <= moves.median * 1.01, "{moves:?}");
+        assert!(moves.resize <= 0.001, "{moves:?}");
+    }
+
+    #[gpui::test]
+    fn test_width_change_scales_heights_by_their_estimates(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // Fifty items of 20px, then fifty that wrap, 8000px wide over the
+        // list's width. Their estimates are half their height.
+        fn height(ix: usize, width: f32) -> f32 {
+            if ix < 50 { 20. } else { 8000. / width }
+        }
+        struct WrappingView(ListState, Rc<Cell<f32>>);
+        impl Render for WrappingView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let width = self.1.get();
+                list(self.0.clone(), move |ix, _, _| {
+                    div().h(px(height(ix, width))).w_full().into_any()
+                })
+                .estimate_item_heights(|ix, width, _, _| px(height(ix, f32::from(width)) / 2.))
+                .w_full()
+                .h_full()
+            }
+        }
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.));
+        let width = Rc::new(Cell::new(100.));
+        let view = cx.update(|_, cx| cx.new(|_| WrappingView(state.clone(), width.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext, at: f32| {
+            width.set(at);
+            cx.draw(point(px(0.), px(0.)), size(px(at), px(200.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+
+        // Every item measured once at 100px, from the end up to the start.
+        state.scroll_to(gpui::ListOffset {
+            item_ix: 100,
+            offset_in_item: px(0.),
+        });
+        for ix in (0..100).rev() {
+            state.scroll_to(gpui::ListOffset {
+                item_ix: ix,
+                offset_in_item: px(0.),
+            });
+            draw(cx, 100.);
+        }
+        assert_eq!(
+            state.max_offset_for_scrollbar().y,
+            px(50. * 20. + 50. * 80. - 200.)
+        );
+
+        // At 200px the items not drawn again count their height at 100px
+        // scaled by their estimates, which is their height at 200px.
+        draw(cx, 200.);
+        assert_eq!(
+            state.max_offset_for_scrollbar().y,
+            px(50. * 20. + 50. * 40. - 200.)
+        );
+
+        // Items added count their estimates.
+        state.splice(100..100, 10);
+        draw(cx, 200.);
+        assert_eq!(
+            state.max_offset_for_scrollbar().y,
+            px(50. * 20. + 50. * 40. + 10. * 20. - 200.)
+        );
     }
 
     #[gpui::test]

@@ -167,6 +167,14 @@ adds the same line.
   its place, and both ends of the track are the ends of the list. A dragged thumb keeps its size
   and stays under the pointer. Wheel and track scrolling through `set_offset_from_scrollbar` moves
   the list by the distance asked. The tests at the end of `list.rs` cover it.
+- **Height estimates for list items not drawn yet**, in `mhr-gpui`'s `src/elements/list.rs`.
+  `List::estimate_item_heights` takes a closure that estimates an item's height at a width from
+  what's known about it, such as its lines of text times their height. The scrollbar counts the
+  estimates for the items the list hasn't drawn, so its thumb moves evenly and keeps its size as
+  the reader scrolls onto new items. The list asks for estimates of new items, of every item after
+  `ListState::remeasure`, and of every item when its width changes. An item measured at the old
+  width then counts its height scaled by its estimate at the new width over its estimate at the
+  old one. The tests at the end of `list.rs` cover it.
 - **Cached views inside cached views stay cached**, in `mhr-gpui`'s `src/view.rs`,
   `src/window.rs` and `src/text_system/line_layout.rs`. A cached view that redrew made every
   cached view inside it redraw too, so caching a view inside another gave nothing. Such a view is
