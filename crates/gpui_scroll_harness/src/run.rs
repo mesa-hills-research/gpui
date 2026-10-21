@@ -459,3 +459,68 @@ pub fn run(
         heap,
     })
 }
+
+/// Frame times of a list of many rows while its width changes by a pixel a
+/// frame, as when a window's edge is dragged, and while nothing changes.
+pub struct ResizeBench {
+    pub rows: usize,
+    pub estimates: String,
+    /// The frames before the drag, in ms.
+    pub still: Vec<f32>,
+    /// The frames of the drag, in ms.
+    pub drag: Vec<f32>,
+}
+
+/// Opens a list of `count` rows (the long transcript, repeated) with the
+/// estimates `estimates` picks, draws frames without a change, then drags
+/// its width from 800 to 700px a pixel a frame.
+pub fn bench_resize(
+    app: &mut ScreenshotApp,
+    count: usize,
+    estimates: &str,
+    options: &Options,
+) -> Result<ResizeBench> {
+    crate::adopt::set_mode(estimates);
+    let long = transcript(options.long_turns, options.seed);
+    let rows: Rc<Vec<Row>> = Rc::new(long.iter().cycle().take(count).cloned().collect());
+    let state = ListState::new(rows.len(), ListAlignment::Top, px(OVERDRAW));
+    adopt(
+        &state,
+        &Facts {
+            rows: &rows,
+            width: px(WIDE),
+            exact: &vec![0.; rows.len()],
+        },
+    );
+    let window = app.open_window(size(px(WIDE), px(VIEWPORT)), 1., |_, cx| {
+        cx.new(|_| Harness::new(state.clone(), rows.clone(), px(WIDE), Wheel::List, 0.))
+    })?;
+    let any_window: AnyWindowHandle = window.into();
+    draw(app, any_window)?;
+    draw(app, any_window)?;
+    let mut still = Vec::new();
+    for _ in 0..30 {
+        let started = Instant::now();
+        app.update_window(any_window, |_, window, _| window.refresh())?;
+        still.push(started.elapsed().as_secs_f32() * 1e3);
+    }
+    let mut drag = Vec::new();
+    for step in 1..=100 {
+        let started = Instant::now();
+        app.update(|cx| {
+            window.update(cx, |view, _, cx| {
+                view.width = px(WIDE - step as f32);
+                cx.notify();
+            })
+        })?;
+        drag.push(started.elapsed().as_secs_f32() * 1e3);
+    }
+    app.update_window(any_window, |_, window, _| window.remove_window())?;
+    app.run_until_parked();
+    Ok(ResizeBench {
+        rows: count,
+        estimates: estimates.to_string(),
+        still,
+        drag,
+    })
+}

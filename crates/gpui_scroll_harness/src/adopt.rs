@@ -7,10 +7,13 @@
 //! the lines guessed from the text's characters and the font's average
 //! character width, measured once from a sample sentence.
 //!
-//! `ESTIMATE` in the environment picks other estimates, for bounds:
+//! `ESTIMATE` in the environment picks other estimates. `model` is the same
+//! rules with each font's average character width calibrated once, as the
+//! width that best explains the real heights of the rows of that font at
+//! the first width (an app would take the rows it has drawn). For bounds,
 //! `exact` gives every row's real height (as a cache of heights kept from
-//! an earlier session would), `exact-25` the real height off by up to 25%
-//! either way, and `none` no estimates at all.
+//! an earlier session would), and `exact-25` the real height off by up to
+//! 25% either way. `none` gives no estimates at all.
 
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
@@ -50,11 +53,33 @@ thread_local! {
     /// The rows' real heights at each width the list has had, for the
     /// bounds.
     static EXACT: RefCell<HashMap<u32, Rc<Vec<f32>>>> = RefCell::default();
+    /// Which estimates the list gets, from `ESTIMATE` unless set otherwise.
+    static MODE: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The average character widths calibrated for `model`.
+    static CALIBRATED: RefCell<Option<CharWidths>> = const { RefCell::new(None) };
+}
+
+/// Which estimates the list gets.
+pub fn mode() -> String {
+    MODE.with(|mode| {
+        mode.borrow_mut()
+            .get_or_insert_with(|| std::env::var("ESTIMATE").unwrap_or_default())
+            .clone()
+    })
+}
+
+/// Picks the estimates the list gets, in place of `ESTIMATE`.
+pub fn set_mode(estimates: &str) {
+    MODE.with(|mode| *mode.borrow_mut() = Some(estimates.to_string()));
 }
 
 /// Called after the list's state is made, and again after the list's width
 /// changes, with what the app knows about its rows then.
 pub fn adopt(_state: &ListState, facts: &Facts) {
+    if mode() == "model" && CALIBRATED.with(|widths| widths.borrow().is_none()) {
+        let widths = calibrate(facts);
+        CALIBRATED.with(|cell| *cell.borrow_mut() = Some(widths));
+    }
     EXACT.with(|exact| {
         exact.borrow_mut().insert(
             f32::from(facts.width).to_bits(),
@@ -67,9 +92,15 @@ pub fn adopt(_state: &ListState, facts: &Facts) {
 /// is on the element rather than on its state.
 pub fn element(list: List, rows: &Rc<Vec<Row>>) -> List {
     let rows = rows.clone();
-    let mode = std::env::var("ESTIMATE").unwrap_or_default();
+    let mode = mode();
     match mode.as_str() {
         "none" => list,
+        "model" => list.estimate_item_heights(move |ix, width, _, _| {
+            let widths = CALIBRATED
+                .with(|widths| *widths.borrow())
+                .unwrap_or_else(widths);
+            px(estimate(&rows[ix], f32::from(width), &widths))
+        }),
         "exact" | "exact-25" => {
             let error = if mode == "exact" { 0. } else { 0.25 };
             list.estimate_item_heights(move |ix, width, _, _| {
@@ -151,6 +182,42 @@ fn char_widths(window: &mut Window, _cx: &mut App) -> CharWidths {
     widths
 }
 
+/// For each font, the average character width between 70% and 130% of a
+/// guess that best explains the real heights of the rows in that font at
+/// the first width.
+fn calibrate(facts: &Facts) -> CharWidths {
+    let fit = |guess: f32, kinds: &[Kind], set: fn(&mut CharWidths, f32)| {
+        let mut best = (f32::MAX, guess);
+        for step in 0..=120 {
+            let width = guess * (0.7 + step as f32 * 0.005);
+            let mut widths = CharWidths {
+                prose: guess,
+                notice: guess,
+                heading: guess,
+            };
+            set(&mut widths, width);
+            let error: f32 = facts
+                .rows
+                .iter()
+                .zip(facts.exact)
+                .filter(|(row, _)| kinds.contains(&row.kind))
+                .map(|(row, exact)| (estimate(row, f32::from(facts.width), &widths) - exact).abs())
+                .sum();
+            if error < best.0 {
+                best = (error, width);
+            }
+        }
+        best.1
+    };
+    CharWidths {
+        prose: fit(7.5, &[Kind::Paragraph, Kind::User], |widths, width| {
+            widths.prose = width
+        }),
+        notice: fit(6.5, &[Kind::Notice], |widths, width| widths.notice = width),
+        heading: fit(9., &[Kind::Heading], |widths, width| widths.heading = width),
+    }
+}
+
 /// Row `row`'s height at `width`, from its kind, its text's length and its
 /// lines, and the layout its kind has.
 fn estimate(row: &Row, width: f32, widths: &CharWidths) -> f32 {
@@ -169,9 +236,9 @@ fn estimate(row: &Row, width: f32, widths: &CharWidths) -> f32 {
         Kind::Paragraph => lines(row.chars(), widths.prose, column) * 24.,
         Kind::Heading => lines(row.chars(), widths.heading, column) * 28. + 4.,
         Kind::Bullets => {
-            row.items
+            row.item_chars()
                 .iter()
-                .map(|item| lines(item.chars().count(), widths.prose, column - 20.) * 24.)
+                .map(|chars| lines(*chars, widths.prose, column - 20.) * 24.)
                 .sum::<f32>()
                 + 4. * row.items.len().saturating_sub(1) as f32
         }
