@@ -28,6 +28,7 @@ members = [
     "crates/reqwest_client",
     "crates/gpui_mobile",
     "crates/gpui_screenshot",
+    "crates/gpui_scroll_harness",
 ]
 
 [workspace.package]

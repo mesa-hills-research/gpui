@@ -3584,6 +3584,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mhr-gpui-scroll-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gif",
+ "image",
+ "mhr-gpui",
+ "mhr-gpui-screenshot",
+]
+
+[[package]]
 name = "mhr-gpui-shared-string"
 version = "0.1.0"
 dependencies = [
