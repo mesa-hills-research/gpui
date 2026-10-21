@@ -99,10 +99,11 @@ struct Args {
     scenarios: Vec<String>,
     film: Vec<(String, usize)>,
     metric: bool,
+    bench_resize: Vec<usize>,
     options: Options,
 }
 
-const USAGE: &str = "Usage\n  scroll-harness --out DIR [--label NAME] [--scenarios a,b] [--film a[:leg],b] [--no-metric] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N] [--refresh-idle] [--settle N]";
+const USAGE: &str = "Usage\n  scroll-harness --out DIR [--label NAME] [--scenarios a,b] [--film a[:leg],b] [--no-metric] [--bench-resize ROWS,ROWS] [--turns N] [--medium-turns N] [--short-turns N] [--seed N] [--frames N] [--refresh-idle] [--settle N]";
 
 fn parse() -> Result<Args> {
     let mut args = Args {
@@ -111,6 +112,7 @@ fn parse() -> Result<Args> {
         scenarios: Vec::new(),
         film: Vec::new(),
         metric: true,
+        bench_resize: Vec::new(),
         options: Options {
             long_turns: 120,
             medium_turns: 30,
@@ -139,6 +141,11 @@ fn parse() -> Result<Args> {
                 }
             }
             "--no-metric" => args.metric = false,
+            "--bench-resize" => {
+                for rows in value()?.split(',') {
+                    args.bench_resize.push(rows.parse()?);
+                }
+            }
             "--turns" => args.options.long_turns = value()?.parse()?,
             "--medium-turns" => args.options.medium_turns = value()?.parse()?,
             "--short-turns" => args.options.short_turns = value()?.parse()?,
@@ -304,6 +311,43 @@ fn main() -> Result<()> {
         report.push('\n');
         report.push_str(KEY);
         std::fs::write(args.out.join("report.txt"), &report)?;
+        println!("{report}");
+    }
+
+    if !args.bench_resize.is_empty() {
+        let estimates: Vec<String> = std::env::var("BENCH_ESTIMATES")
+            .map(|list| list.split(',').map(str::to_string).collect())
+            .unwrap_or_else(|_| vec!["none".to_string(), "app".to_string()]);
+        let mut report = header.clone();
+        let _ = writeln!(
+            report,
+            "\nFRAMES WHILE THE LIST'S WIDTH CHANGES A PIXEL A FRAME (ms; still = no change)\n{:>8} {:<10} | {:>7} {:>7} | {:>7} {:>7} {:>7} {:>7}",
+            "rows", "estimates", "still50", "still95", "drag50", "drag95", "dragmax", "dragavg"
+        );
+        for rows in &args.bench_resize {
+            for estimates in &estimates {
+                eprintln!("resize bench: {rows} rows, estimates {estimates:?}");
+                let bench = run::bench_resize(&mut app, *rows, estimates, options)?;
+                let stat = |values: &[f32], share: f32| {
+                    let mut sorted = values.to_vec();
+                    sorted.sort_by(f32::total_cmp);
+                    sorted[((sorted.len() - 1) as f32 * share).round() as usize]
+                };
+                let _ = writeln!(
+                    report,
+                    "{:>8} {:<10} | {:>7.3} {:>7.3} | {:>7.3} {:>7.3} {:>7.3} {:>7.3}",
+                    bench.rows,
+                    bench.estimates,
+                    stat(&bench.still, 0.5),
+                    stat(&bench.still, 0.95),
+                    stat(&bench.drag, 0.5),
+                    stat(&bench.drag, 0.95),
+                    stat(&bench.drag, 1.),
+                    bench.drag.iter().sum::<f32>() / bench.drag.len() as f32,
+                );
+            }
+        }
+        std::fs::write(args.out.join("bench-resize.txt"), &report)?;
         println!("{report}");
     }
 

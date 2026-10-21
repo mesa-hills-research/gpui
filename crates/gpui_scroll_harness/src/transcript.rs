@@ -87,6 +87,10 @@ pub struct Row {
     pub lines: usize,
     /// The space above the row, in rems.
     pub gap: f32,
+    /// The characters of the row's text, or of each of its items, counted
+    /// once, as an app keeps them.
+    char_count: usize,
+    item_chars: Vec<usize>,
 }
 
 #[allow(dead_code, reason = "facts for candidates that need them")]
@@ -98,16 +102,30 @@ impl Row {
             items: Vec::new(),
             lines: 0,
             gap,
+            char_count: 0,
+            item_chars: Vec::new(),
         }
+    }
+
+    /// Counts the row's characters, once its text and items are set.
+    fn counted(mut self) -> Self {
+        self.item_chars = self.items.iter().map(|item| item.chars().count()).collect();
+        self.char_count = if self.items.is_empty() {
+            self.text.chars().count()
+        } else {
+            self.item_chars.iter().sum()
+        };
+        self
     }
 
     /// The characters of prose the row wraps, in its text or its items.
     pub fn chars(&self) -> usize {
-        if self.items.is_empty() {
-            self.text.chars().count()
-        } else {
-            self.items.iter().map(|item| item.chars().count()).sum()
-        }
+        self.char_count
+    }
+
+    /// The characters of each item of a bulleted list.
+    pub fn item_chars(&self) -> &[usize] {
+        &self.item_chars
     }
 
     /// The lines of code or output the row shows.
@@ -368,7 +386,7 @@ pub fn transcript(turns: usize, seed: u64) -> Vec<Row> {
         rows.push(Row::new(Kind::Actions, "", 0.25));
         rows.push(Row::new(Kind::Turn, "3 s · 1.2k tokens · $0.01", 0.25));
     }
-    rows
+    rows.into_iter().map(Row::counted).collect()
 }
 
 const FOREGROUND: u32 = 0x1f2328;
