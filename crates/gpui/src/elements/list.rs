@@ -3686,6 +3686,42 @@ mod test {
     }
 
     #[gpui::test]
+    fn test_remeasure_asks_for_new_estimates(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // A hundred items of 20px at a scale, estimated exactly.
+        struct ScaledView(ListState, Rc<Cell<f32>>);
+        impl Render for ScaledView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let scale = self.1.clone();
+                let height = scale.get() * 20.;
+                list(self.0.clone(), move |_, _, _| {
+                    div().h(px(height)).w_full().into_any()
+                })
+                .estimate_item_heights(move |_, _, _, _| px(scale.get() * 20.))
+                .w_full()
+                .h_full()
+            }
+        }
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.));
+        let scale = Rc::new(Cell::new(1.));
+        let view = cx.update(|_, cx| cx.new(|_| ScaledView(state.clone(), scale.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+        assert_eq!(state.max_offset_for_scrollbar().y, px(100. * 20. - 200.));
+
+        // Zoomed in, the items not drawn count their new estimates at once.
+        scale.set(2.);
+        state.remeasure();
+        draw(cx);
+        assert_eq!(state.max_offset_for_scrollbar().y, px(100. * 40. - 200.));
+    }
+
+    #[gpui::test]
     fn test_scrollbar_thumb_stays_under_pointer_while_dragged_over_unmeasured_items(
         cx: &mut TestAppContext,
     ) {
