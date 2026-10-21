@@ -20,9 +20,20 @@ use std::{cell::RefCell, cmp::Ordering, ops::Range, rc::Rc};
 use sum_tree::{Bias, Dimensions, SumTree};
 
 /// How far the scrollbar's thumb may lead or trail the list, as a share of
-/// the list's distance to its nearer end. Corrections from measuring rows
-/// beyond this show as a jump of the thumb.
+/// the list's distance to its nearer end. Beyond this, the thumb is pulled
+/// back by [`THUMB_PULL`] of the excess over a viewport's height of
+/// scrolling.
 const THUMB_LEAD: f32 = 0.5;
+
+/// The share of the thumb's excess lead or trail that a viewport's height of
+/// scrolling pulls back.
+const THUMB_PULL: f32 = 0.5;
+
+/// How much the thumb's speed, in track per pixel of the list, may change
+/// over a viewport's height of scrolling, as a share of itself. Rows
+/// measured taller or shorter than estimated change the distance the thumb
+/// has left, and this spreads the change of speed over the following steps.
+const THUMB_SPEED_CHANGE: f32 = 0.5;
 
 type RenderItemFn = dyn FnMut(usize, &mut Window, &mut App) -> AnyElement + 'static;
 type EstimateHeightFn = dyn FnMut(usize, Pixels, &mut Window, &mut App) -> Pixels + 'static;
@@ -131,6 +142,22 @@ struct ScrollbarAnchor {
     top: ListOffset,
     fraction: f32,
     estimate: Pixels,
+    /// The thumb's speed as it last moved, in track per pixel of the list,
+    /// and the way it moved (1 down the list, -1 up). Zero before it moves.
+    speed: f32,
+    direction: i8,
+}
+
+impl ScrollbarAnchor {
+    fn at(top: ListOffset, fraction: f32, estimate: Pixels) -> Self {
+        Self {
+            top,
+            fraction,
+            estimate,
+            speed: 0.,
+            direction: 0,
+        }
+    }
 }
 
 /// The scroll range a drag of the scrollbar's thumb started with, and the
@@ -1091,6 +1118,7 @@ impl StateInner {
             return (drag.fraction, drag.max_offset, drag.offset);
         }
         let mean = self.items.summary().estimated_item_height();
+        let viewport = self.last_layout_bounds.unwrap_or_default().size.height;
         // The thumb follows the list's move since it was last shown, by the
         // estimate it was shown with. The estimate catches up with the mean
         // over a viewport's height of scrolling.
@@ -1098,36 +1126,50 @@ impl StateInner {
             let max_offset = self.estimated_max_offset();
             let from = self.estimated_offset(anchor.top).clamp(px(0.), max_offset);
             let offset = self.estimated_scroll_offset(max_offset);
-            let fraction = if max_offset > px(0.) {
-                follow(anchor.fraction, from, offset, max_offset)
+            let delta = offset - from;
+            let share = if viewport > px(0.) {
+                delta.abs() / viewport
             } else {
-                0.
+                1.
             };
-            let viewport = self.last_layout_bounds.unwrap_or_default().size.height;
-            let catch_up = if anchor.estimate <= px(0.) || viewport <= px(0.) {
+            let (fraction, speed, direction) = if max_offset <= px(0.) {
+                (0., 0., 0)
+            } else if delta == px(0.) {
+                (anchor.fraction, anchor.speed, anchor.direction)
+            } else {
+                let direction = if delta > px(0.) { 1 } else { -1 };
+                let target = follow(anchor.fraction, from, offset, max_offset);
+                let mut speed = ((target - anchor.fraction) / delta.0).max(0.);
+                if anchor.speed > 0. && anchor.direction == direction {
+                    let change = (share * THUMB_SPEED_CHANGE).min(0.5);
+                    speed = speed.clamp(anchor.speed * (1. - change), anchor.speed * (1. + change));
+                }
+                (anchor.fraction + speed * delta.0, speed, direction)
+            };
+            let catch_up = if anchor.estimate <= px(0.) {
                 1.
             } else {
-                ((offset - from).abs() / viewport).min(1.)
+                share.min(1.)
             };
             (
                 fraction,
                 anchor.estimate + (mean - anchor.estimate) * catch_up,
+                speed,
+                direction,
+                (share * THUMB_PULL).min(1.),
             )
         });
         let top = self.logical_scroll_top();
-        let estimate = followed.map_or(mean, |(_, estimate)| estimate);
-        self.scrollbar_anchor = Some(ScrollbarAnchor {
-            top,
-            fraction: 0.,
-            estimate,
-        });
+        let estimate = followed.map_or(mean, |(_, estimate, ..)| estimate);
+        self.scrollbar_anchor = Some(ScrollbarAnchor::at(top, 0., estimate));
         let max_offset = self.estimated_max_offset();
         let offset = self.estimated_scroll_offset(max_offset);
         let line = scroll_fraction(offset, max_offset);
         let mut fraction = bound_thumb(
-            followed.map_or(line, |(fraction, _)| fraction),
+            followed.map_or(line, |(fraction, ..)| fraction),
             offset,
             max_offset,
+            followed.map_or(1., |(.., pull)| pull),
         );
         // On the list's own place, the scrollbar gets the list's offset
         // exactly.
@@ -1137,10 +1179,14 @@ impl StateInner {
         } else {
             max_offset * fraction
         };
+        let (speed, direction) =
+            followed.map_or((0., 0), |(_, _, speed, direction, _)| (speed, direction));
         self.scrollbar_anchor = Some(ScrollbarAnchor {
             top,
             fraction,
             estimate,
+            speed,
+            direction,
         });
         (fraction, max_offset, shown)
     }
@@ -1172,7 +1218,8 @@ impl StateInner {
         let top = self.logical_scroll_top();
         if let Some(anchor) = self.scrollbar_anchor.as_mut() {
             anchor.top = top;
-            anchor.fraction = bound_thumb(anchor.fraction + line - line_before, offset, max_offset);
+            anchor.fraction =
+                bound_thumb(anchor.fraction + line - line_before, offset, max_offset, 1.);
         }
     }
 
@@ -1763,11 +1810,11 @@ impl StateInner {
                 ..drag
             });
             let max_offset = self.estimated_max_offset();
-            let anchor = self.scrollbar_anchor.unwrap_or(ScrollbarAnchor {
-                top: self.logical_scroll_top(),
-                fraction: drag.fraction,
-                estimate: self.scrollbar_estimate(),
-            });
+            let anchor = self.scrollbar_anchor.unwrap_or(ScrollbarAnchor::at(
+                self.logical_scroll_top(),
+                drag.fraction,
+                self.scrollbar_estimate(),
+            ));
             let from = self.estimated_offset(anchor.top).clamp(px(0.), max_offset);
             let target = if fraction >= 1. {
                 None
@@ -1801,11 +1848,11 @@ impl StateInner {
                 self.rebase_pending_scroll(scroll_top);
                 self.logical_scroll_top = Some(scroll_top);
                 if let Some(drag) = self.scrollbar_drag {
-                    self.scrollbar_anchor = Some(ScrollbarAnchor {
-                        top: scroll_top,
-                        fraction: drag.fraction,
-                        estimate: self.scrollbar_estimate(),
-                    });
+                    self.scrollbar_anchor = Some(ScrollbarAnchor::at(
+                        scroll_top,
+                        drag.fraction,
+                        self.scrollbar_estimate(),
+                    ));
                 }
             }
             _ => {
@@ -1823,11 +1870,8 @@ impl StateInner {
                     ListAlignment::Top => Some(end),
                     ListAlignment::Bottom => None,
                 };
-                self.scrollbar_anchor = Some(ScrollbarAnchor {
-                    top: end,
-                    fraction: 1.,
-                    estimate: self.scrollbar_estimate(),
-                });
+                self.scrollbar_anchor =
+                    Some(ScrollbarAnchor::at(end, 1., self.scrollbar_estimate()));
             }
         }
     }
@@ -1871,9 +1915,10 @@ fn unfollow(fraction: f32, from: Pixels, to_fraction: f32, max_offset: Pixels) -
 }
 
 /// Keeps the thumb's place `fraction` close to the list's, `offset` down its
-/// scroll range `max_offset`. The thumb is at either end when the list is, and
-/// otherwise within [`THUMB_LEAD`] of the list's distance to its nearer end.
-fn bound_thumb(fraction: f32, offset: Pixels, max_offset: Pixels) -> f32 {
+/// scroll range `max_offset`. The thumb is at either end when the list is.
+/// Otherwise, beyond [`THUMB_LEAD`] of the list's distance to its nearer
+/// end, it's pulled back toward that bound by `pull` of the excess.
+fn bound_thumb(fraction: f32, offset: Pixels, max_offset: Pixels, pull: f32) -> f32 {
     if max_offset <= px(0.) || offset <= px(0.) {
         return 0.;
     }
@@ -1882,7 +1927,8 @@ fn bound_thumb(fraction: f32, offset: Pixels, max_offset: Pixels) -> f32 {
     }
     let line = offset / max_offset;
     let room = line.min(1. - line) * THUMB_LEAD;
-    fraction.clamp(line - room, line + room)
+    let bound = fraction.clamp(line - room, line + room);
+    bound + (fraction - bound) * (1. - pull.clamp(0., 1.))
 }
 
 impl std::fmt::Debug for ListItem {
@@ -3786,6 +3832,58 @@ mod test {
             state.max_offset_for_scrollbar().y,
             px(98. * 20. + 220. + 120. - 200.)
         );
+    }
+
+    #[gpui::test]
+    fn test_scrollbar_thumb_changes_speed_gradually(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+
+        // The list of mixed heights again, drawn from the end and scrolled
+        // up with the wheel, 60px a frame.
+        let state = ListState::new(400, crate::ListAlignment::Top, px(100.));
+        state.set_follow_mode(FollowMode::Tail);
+        let view = cx.update(|_, cx| cx.new(|_| MixedView(state.clone())));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        draw(cx);
+        let top = |thumb: Thumb| {
+            let length = (300. / thumb.content * 300.).clamp(48., 300.);
+            thumb.fraction * (300. - length)
+        };
+        let mut tops = vec![top(thumb(&state))];
+        while thumb(&state).fraction > 0. && tops.len() < 10_000 {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(50.), px(150.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(60.))),
+                ..Default::default()
+            });
+            draw(cx);
+            tops.push(top(thumb(&state)));
+        }
+
+        // Between one frame and the next, the thumb's step changes by a
+        // small share of itself, though the rows measured keep changing the
+        // list's estimate of its height. The last viewport of travel is
+        // left out, where the thumb lands on the end together with the
+        // list.
+        let steps: Vec<f32> = tops.windows(2).map(|pair| pair[0] - pair[1]).collect();
+        let mut worst = (0., 0);
+        for (ix, pair) in steps[2..steps.len() - 5].windows(2).enumerate() {
+            let change = (pair[1] / pair[0] - 1.).abs();
+            if change > worst.0 {
+                worst = (change, ix + 2);
+            }
+        }
+        eprintln!(
+            "the thumb's step changed most at frame {}, by {:.1}%: {:?}",
+            worst.1,
+            worst.0 * 100.,
+            &steps[worst.1.saturating_sub(6)..(worst.1 + 4).min(steps.len())]
+        );
+        assert!(worst.0 <= 0.2, "{worst:?}");
     }
 
     #[gpui::test]
