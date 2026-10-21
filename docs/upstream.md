@@ -175,6 +175,12 @@ adds the same line.
   and a view is reused only from what it drew in the previous frame, so a cached view under an
   element that was hidden for a frame draws again when it shows. The tests at the end of
   `view.rs` cover it. `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui` follows it.
+- **Text measured for its natural width**, in `mhr-gpui`'s `src/elements/text.rs`. A text
+  element asked for its size without a width answered with the size it last wrapped to, so a
+  box as wide as its text stayed as narrow as some earlier layout made it. It now lays the text
+  out without wrapping, and keeps the layout it replaced, so text measured at its natural width
+  and then laid out at a narrower one, frame after frame, is laid out once at each width. The
+  tests at the end of `text.rs` cover it.
 
 ## The mobile crate
 
