@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{FontId, GlyphId, Pixels, PlatformTextSystem, Point, SharedString, Size, point, px};
 use collections::FxHashMap;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -491,6 +492,29 @@ pub(crate) struct LineLayoutIndex {
     wrapped_lines_index: usize,
     lines_by_hash_index: usize,
     wrapped_lines_by_hash_index: usize,
+}
+
+impl LineLayoutIndex {
+    /// This index, recorded inside a range that starts at `from`, after
+    /// [`LineLayoutCache::reuse_layouts`] copied the range to `to`. Nothing is
+    /// copied across a change of fonts, so then it's `to`.
+    pub(crate) fn rebased(&self, from: &Self, to: &Self) -> Self {
+        if self.font_generation != from.font_generation
+            || from.font_generation != to.font_generation
+        {
+            return to.clone();
+        }
+        Self {
+            font_generation: to.font_generation,
+            lines_index: to.lines_index + (self.lines_index - from.lines_index),
+            wrapped_lines_index: to.wrapped_lines_index
+                + (self.wrapped_lines_index - from.wrapped_lines_index),
+            lines_by_hash_index: to.lines_by_hash_index
+                + (self.lines_by_hash_index - from.lines_by_hash_index),
+            wrapped_lines_by_hash_index: to.wrapped_lines_by_hash_index
+                + (self.wrapped_lines_by_hash_index - from.wrapped_lines_by_hash_index),
+        }
+    }
 }
 
 impl LineLayoutCache {

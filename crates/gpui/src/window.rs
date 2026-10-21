@@ -28,6 +28,7 @@ use crate::{
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
 use crate::interactive::TouchEvent;
+use crate::view::ViewElementState;
 use anyhow::{Context as _, Result, anyhow};
 use collections::{FxHashMap, FxHashSet};
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -1033,6 +1034,93 @@ pub(crate) struct PaintIndex {
     line_layout_index: LineLayoutIndex,
 }
 
+/// Where an index recorded at `index`, inside a range of the rendered frame
+/// that starts at `from`, points once that range is copied to `to`.
+fn rebase_index(index: usize, from: usize, to: usize) -> usize {
+    to + (index - from)
+}
+
+impl PrepaintStateIndex {
+    /// This index, recorded inside a range of the rendered frame that starts at
+    /// `from`, after [`Window::reuse_prepaint`] copied the range to `to`.
+    pub(crate) fn rebased(&self, from: &Self, to: &Self) -> Self {
+        Self {
+            hitboxes_index: rebase_index(
+                self.hitboxes_index,
+                from.hitboxes_index,
+                to.hitboxes_index,
+            ),
+            tooltips_index: rebase_index(
+                self.tooltips_index,
+                from.tooltips_index,
+                to.tooltips_index,
+            ),
+            deferred_draws_index: rebase_index(
+                self.deferred_draws_index,
+                from.deferred_draws_index,
+                to.deferred_draws_index,
+            ),
+            dispatch_tree_index: rebase_index(
+                self.dispatch_tree_index,
+                from.dispatch_tree_index,
+                to.dispatch_tree_index,
+            ),
+            accessed_element_states_index: rebase_index(
+                self.accessed_element_states_index,
+                from.accessed_element_states_index,
+                to.accessed_element_states_index,
+            ),
+            line_layout_index: self
+                .line_layout_index
+                .rebased(&from.line_layout_index, &to.line_layout_index),
+        }
+    }
+}
+
+impl PaintIndex {
+    /// This index, recorded inside a range of the rendered frame that starts at
+    /// `from`, after [`Window::reuse_paint`] copied the range to `to`.
+    pub(crate) fn rebased(&self, from: &Self, to: &Self) -> Self {
+        Self {
+            scene_index: rebase_index(self.scene_index, from.scene_index, to.scene_index),
+            #[cfg(any(test, feature = "test-support"))]
+            debug_bounds_index: rebase_index(
+                self.debug_bounds_index,
+                from.debug_bounds_index,
+                to.debug_bounds_index,
+            ),
+            mouse_listeners_index: rebase_index(
+                self.mouse_listeners_index,
+                from.mouse_listeners_index,
+                to.mouse_listeners_index,
+            ),
+            input_handlers_index: rebase_index(
+                self.input_handlers_index,
+                from.input_handlers_index,
+                to.input_handlers_index,
+            ),
+            cursor_styles_index: rebase_index(
+                self.cursor_styles_index,
+                from.cursor_styles_index,
+                to.cursor_styles_index,
+            ),
+            accessed_element_states_index: rebase_index(
+                self.accessed_element_states_index,
+                from.accessed_element_states_index,
+                to.accessed_element_states_index,
+            ),
+            tab_handle_index: rebase_index(
+                self.tab_handle_index,
+                from.tab_handle_index,
+                to.tab_handle_index,
+            ),
+            line_layout_index: self
+                .line_layout_index
+                .rebased(&from.line_layout_index, &to.line_layout_index),
+        }
+    }
+}
+
 impl Frame {
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) fn record_debug_bounds(&mut self, selector: String, bounds: Bounds<Pixels>) {
@@ -1154,6 +1242,24 @@ impl Frame {
 
         self.scene.finish();
     }
+
+    /// Calls `f` with the state of each cached view that was drawn, or reused,
+    /// while the given range of `accessed_element_states` was recorded.
+    fn update_cached_view_states(
+        &mut self,
+        accessed_element_states: Range<usize>,
+        mut f: impl FnMut(&mut ViewElementState),
+    ) {
+        let view_state_type = TypeId::of::<ViewElementState>();
+        for key in &self.accessed_element_states[accessed_element_states] {
+            if key.1 == view_state_type
+                && let Some(state) = self.element_states.get_mut(key)
+                && let Some(Some(state)) = state.inner.downcast_mut::<Option<ViewElementState>>()
+            {
+                f(state);
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
@@ -1244,6 +1350,9 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
+    /// The number of the frame being drawn into `next_frame`, counting from 1.
+    /// `rendered_frame` holds the frame before it.
+    pub(crate) frame_number: u64,
     pub(crate) activation_observers: SubscriberSet<(), AnyObserver>,
     pub(crate) focus: Option<FocusId>,
     focus_enabled: bool,
@@ -2137,6 +2246,7 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
+            frame_number: 1,
             activation_observers: SubscriberSet::new(),
             focus: None,
             focus_enabled: true,
@@ -3406,6 +3516,7 @@ impl Window {
         let previous_window_active = self.rendered_frame.window_active;
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
+        self.frame_number += 1;
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
@@ -3872,6 +3983,8 @@ impl Window {
     }
 
     pub(crate) fn reuse_prepaint(&mut self, range: Range<PrepaintStateIndex>) {
+        let source = range.start.clone();
+        let target = self.prepaint_index();
         self.next_frame.hitboxes.extend(
             self.rendered_frame.hitboxes[range.start.hitboxes_index..range.end.hitboxes_index]
                 .iter()
@@ -3920,6 +4033,14 @@ impl Window {
                     paint_range: deferred_draw.paint_range.clone(),
                 }),
         );
+
+        // The cached views drawn inside the range move with it, so that each
+        // one can be reused on its own when the view around it redraws.
+        let frame_number = self.frame_number;
+        self.rendered_frame.update_cached_view_states(
+            range.start.accessed_element_states_index..range.end.accessed_element_states_index,
+            |state| state.follow_reused_prepaint(&source, &target, frame_number),
+        );
     }
 
     pub(crate) fn paint_index(&self) -> PaintIndex {
@@ -3937,6 +4058,8 @@ impl Window {
     }
 
     pub(crate) fn reuse_paint(&mut self, range: Range<PaintIndex>) {
+        let source = range.start.clone();
+        let target = self.paint_index();
         // Cached elements still exist in the frame even when their paint methods don't run.
         #[cfg(any(test, feature = "test-support"))]
         for (selector, bounds) in &self.rendered_frame.debug_bounds_records
@@ -3979,6 +4102,12 @@ impl Window {
         self.next_frame.scene.replay(
             range.start.scene_index..range.end.scene_index,
             &self.rendered_frame.scene,
+        );
+
+        let frame_number = self.frame_number;
+        self.rendered_frame.update_cached_view_states(
+            range.start.accessed_element_states_index..range.end.accessed_element_states_index,
+            |state| state.follow_reused_paint(&source, &target, frame_number),
         );
     }
 

@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{
     AnyElement, AnyEntity, AnyWeakEntity, App, AvailableSpace, Bounds, ContentMask, Context,
     Element, ElementId, Entity, EntityId, GlobalElementId, InspectorElementId, IntoElement,
@@ -8,7 +9,6 @@ use crate::{Empty, Window};
 use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
-use std::mem;
 use std::{
     any::{TypeId, type_name},
     fmt,
@@ -40,7 +40,8 @@ impl AnyView {
     ///
     /// The rendered subtree is recycled from the previous frame unless
     /// [Context::notify] was called on the backing entity since it was rendered
-    /// (or [Window::refresh] is called, which ignores caching).
+    /// (or [Window::refresh] is called, which ignores caching). That holds
+    /// inside another cached view too, when the outer view redraws.
     pub fn cached(self, style: StyleRefinement) -> ViewElement<AnyView> {
         ViewElement::new(self).cached(style)
     }
@@ -234,7 +235,8 @@ impl<T: Render> Entity<T> {
     /// Embed this entity as a cached [`ViewElement`] laid out at `style`.
     ///
     /// The rendered subtree is reused until the entity is notified (or the
-    /// cached bounds / text style change). Caching requires a definite size:
+    /// cached bounds / text style change), inside another cached view too,
+    /// when the outer view redraws. Caching requires a definite size:
     /// a cached view is laid out from `style` and is *not* measured from its
     /// contents. Use [`ViewElement::new`] (or `.child(entity)`) for the
     /// uncached case.
@@ -292,11 +294,50 @@ impl<V: View> IntoElement for ViewElement<V> {
     }
 }
 
-struct ViewElementState {
+pub(crate) struct ViewElementState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
+    /// The [`Window::frame_number`]s of the frames that `prepaint_range` and
+    /// `paint_range` index. A view is reused only if both are the rendered
+    /// frame's.
+    prepaint_frame: u64,
+    paint_frame: u64,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
+}
+
+impl ViewElementState {
+    /// Follows a range of the rendered frame, starting at `from`, that this
+    /// view was drawn inside, to `to` in frame `frame_number`, where
+    /// [`Window::reuse_prepaint`] copied it.
+    pub(crate) fn follow_reused_prepaint(
+        &mut self,
+        from: &PrepaintStateIndex,
+        to: &PrepaintStateIndex,
+        frame_number: u64,
+    ) {
+        if self.prepaint_frame + 1 == frame_number {
+            let range = &self.prepaint_range;
+            self.prepaint_range = range.start.rebased(from, to)..range.end.rebased(from, to);
+            self.prepaint_frame = frame_number;
+        }
+    }
+
+    /// Follows a range of the rendered frame, starting at `from`, that this
+    /// view was painted inside, to `to` in frame `frame_number`, where
+    /// [`Window::reuse_paint`] copied it.
+    pub(crate) fn follow_reused_paint(
+        &mut self,
+        from: &PaintIndex,
+        to: &PaintIndex,
+        frame_number: u64,
+    ) {
+        if self.paint_frame + 1 == frame_number {
+            let range = &self.paint_range;
+            self.paint_range = range.start.rebased(from, to)..range.end.rebased(from, to);
+            self.paint_frame = frame_number;
+        }
+    }
 }
 
 struct ViewElementCacheKey {
@@ -480,11 +521,16 @@ fn prepaint_view(
             |element_state, window| {
                 let content_mask = window.content_mask();
                 let text_style = window.text_style();
+                let frame_number = window.frame_number;
 
+                // A view inside another cached view that redraws is reused too,
+                // unless it was notified itself.
                 if let Some(mut element_state) = element_state
                     && element_state.cache_key.bounds == bounds
                     && element_state.cache_key.content_mask == content_mask
                     && element_state.cache_key.text_style == text_style
+                    && element_state.prepaint_frame + 1 == frame_number
+                    && element_state.paint_frame + 1 == frame_number
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
                 {
@@ -494,11 +540,11 @@ fn prepaint_view(
                         .extend_accessed(&element_state.accessed_entities);
                     let prepaint_end = window.prepaint_index();
                     element_state.prepaint_range = prepaint_start..prepaint_end;
+                    element_state.prepaint_frame = frame_number;
 
                     return (None, element_state);
                 }
 
-                let refreshing = mem::replace(&mut window.refreshing, true);
                 let prepaint_start = window.prepaint_index();
                 let (element, accessed_entities) = cx.detect_accessed_entities(|cx| {
                     let mut element = render(window, cx);
@@ -508,7 +554,6 @@ fn prepaint_view(
                 });
 
                 let prepaint_end = window.prepaint_index();
-                window.refreshing = refreshing;
 
                 (
                     Some(element),
@@ -516,6 +561,9 @@ fn prepaint_view(
                         accessed_entities,
                         prepaint_range: prepaint_start..prepaint_end,
                         paint_range: PaintIndex::default()..PaintIndex::default(),
+                        prepaint_frame: frame_number,
+                        // Set when the view is painted in this frame.
+                        paint_frame: 0,
                         cache_key: ViewElementCacheKey {
                             bounds,
                             content_mask,
@@ -561,15 +609,14 @@ fn paint_view(
                     let paint_start = window.paint_index();
 
                     if let Some(element) = element {
-                        let refreshing = mem::replace(&mut window.refreshing, true);
                         element.paint(window, cx);
-                        window.refreshing = refreshing;
                     } else {
                         window.reuse_paint(element_state.paint_range.clone());
                     }
 
                     let paint_end = window.paint_index();
                     element_state.paint_range = paint_start..paint_end;
+                    element_state.paint_frame = window.frame_number;
 
                     ((), element_state)
                 },
@@ -590,4 +637,541 @@ fn paint_component(
     window.with_id(ElementId::Name(name.into()), |window| {
         element.as_mut().unwrap().paint(window, cx);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        AnyWindowHandle, App, Background, Bounds, ContentMask, Context, Entity, Hsla, Modifiers,
+        Pixels, ScaledPixels, StyleRefinement, TestAppContext, VisualTestContext, Window,
+        WindowHandle, blue, deferred, div, green, hsla, point, prelude::*, px, red, size,
+    };
+    use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+    use std::{cell::Cell, rc::Rc};
+
+    const GROUP_COUNT: usize = 4;
+    const GROUP_HEIGHT: f32 = 40.;
+
+    /// A cached group in a pane, which counts its renders and its clicks.
+    struct Group {
+        color: Hsla,
+        renders: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+    }
+
+    impl Render for Group {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let clicks = self.clicks.clone();
+            div()
+                .id("group")
+                .size_full()
+                .bg(self.color)
+                .on_click(move |_, _, _| clicks.set(clicks.get() + 1))
+        }
+    }
+
+    /// A cached pane of cached groups, one of which it can hide.
+    struct Pane {
+        groups: Vec<Entity<Group>>,
+        hidden_group: Option<usize>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for Pane {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .children(self.groups.iter().enumerate().map(|(ix, group)| {
+                    div()
+                        .w_full()
+                        .h(px(GROUP_HEIGHT))
+                        .when(self.hidden_group == Some(ix), |this| this.invisible())
+                        .child(group.clone().cached(StyleRefinement::default().size_full()))
+                }))
+        }
+    }
+
+    /// A cached view holding the pane, so that the groups are two cached views deep.
+    struct Outer {
+        pane: Entity<Pane>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for Outer {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().size_full().child(
+                self.pane
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+            )
+        }
+    }
+
+    /// The window's root. Each time it's notified it draws one more small
+    /// element ahead of the outer view, so the outer view's drawing lands at
+    /// other positions in the frame.
+    struct Root {
+        outer: Entity<Outer>,
+        leading: usize,
+    }
+
+    impl Render for Root {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .children((0..self.leading).map(|ix| {
+                    div()
+                        .id(ix)
+                        .absolute()
+                        .size(px(1.))
+                        .bg(blue())
+                        .on_click(|_, _, _| {})
+                }))
+                .child(
+                    self.outer
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                )
+        }
+    }
+
+    struct Fixture {
+        window: WindowHandle<Root>,
+        pane: Entity<Pane>,
+        groups: Vec<Entity<Group>>,
+        outer_renders: Rc<Cell<usize>>,
+        pane_renders: Rc<Cell<usize>>,
+        group_renders: Vec<Rc<Cell<usize>>>,
+        group_clicks: Vec<Rc<Cell<usize>>>,
+    }
+
+    impl Fixture {
+        fn open(cx: &mut TestAppContext) -> Self {
+            let outer_renders = Rc::new(Cell::new(0));
+            let pane_renders = Rc::new(Cell::new(0));
+            let group_renders: Vec<_> = (0..GROUP_COUNT).map(|_| Rc::new(Cell::new(0))).collect();
+            let group_clicks: Vec<_> = (0..GROUP_COUNT).map(|_| Rc::new(Cell::new(0))).collect();
+            let window = cx.open_window(size(px(200.), px(200.)), |_, cx| {
+                let groups = (0..GROUP_COUNT)
+                    .map(|ix| {
+                        cx.new(|_| Group {
+                            color: red(),
+                            renders: group_renders[ix].clone(),
+                            clicks: group_clicks[ix].clone(),
+                        })
+                    })
+                    .collect();
+                let pane = cx.new(|_| Pane {
+                    groups,
+                    hidden_group: None,
+                    renders: pane_renders.clone(),
+                });
+                let outer = cx.new(|_| Outer {
+                    pane,
+                    renders: outer_renders.clone(),
+                });
+                Root { outer, leading: 0 }
+            });
+            cx.run_until_parked();
+            let (pane, groups) = window
+                .update(cx, |root, _, cx| {
+                    let pane = root.outer.read(cx).pane.clone();
+                    let groups = pane.read(cx).groups.clone();
+                    (pane, groups)
+                })
+                .unwrap();
+            Self {
+                window,
+                pane,
+                groups,
+                outer_renders,
+                pane_renders,
+                group_renders,
+                group_clicks,
+            }
+        }
+
+        /// How many times the outer view, the pane and each group rendered.
+        fn renders(&self) -> (usize, usize, Vec<usize>) {
+            (
+                self.outer_renders.get(),
+                self.pane_renders.get(),
+                self.group_renders
+                    .iter()
+                    .map(|renders| renders.get())
+                    .collect(),
+            )
+        }
+
+        /// The groups' backgrounds in the rendered frame, from top to bottom,
+        /// with their tops in pixels.
+        fn painted_groups(&self, cx: &mut TestAppContext) -> Vec<(f32, Background)> {
+            self.window
+                .update(cx, |_, window, _| {
+                    let scale_factor = window.scale_factor();
+                    let mut quads: Vec<_> = window
+                        .rendered_frame
+                        .scene
+                        .quads
+                        .iter()
+                        .filter(|quad| quad.bounds.size.height.0 / scale_factor == GROUP_HEIGHT)
+                        .map(|quad| (quad.bounds.origin.y.0 / scale_factor, quad.background))
+                        .collect();
+                    quads.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    quads
+                })
+                .unwrap()
+        }
+
+        fn expect_painted(&self, cx: &mut TestAppContext, colors: [Hsla; GROUP_COUNT]) {
+            let expected: Vec<_> = colors
+                .iter()
+                .enumerate()
+                .map(|(ix, color)| (ix as f32 * GROUP_HEIGHT, Background::from(*color)))
+                .collect();
+            assert_eq!(self.painted_groups(cx), expected);
+        }
+
+        /// Clicks each group once and checks that each one's own handler ran.
+        fn click_each_group(&self, cx: &mut TestAppContext) {
+            let mut cx = VisualTestContext::from_window(AnyWindowHandle::from(self.window), cx);
+            for (ix, clicks) in self.group_clicks.iter().enumerate() {
+                let before = clicks.get();
+                let y = (ix as f32 + 0.5) * GROUP_HEIGHT;
+                cx.simulate_click(point(px(100.), px(y)), Modifiers::none());
+                assert_eq!(clicks.get(), before + 1, "group {ix} handles its click");
+            }
+        }
+
+        fn notify_root(&self, cx: &mut TestAppContext) {
+            self.window
+                .update(cx, |root, _, cx| {
+                    root.leading += 1;
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        fn recolor_group(&self, cx: &mut TestAppContext, ix: usize, color: Hsla) {
+            self.groups[ix].update(cx, |group, cx| {
+                group.color = color;
+                cx.notify();
+            });
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn a_clean_nested_view_is_reused_when_the_view_around_it_redraws(cx: &mut TestAppContext) {
+        let fixture = Fixture::open(cx);
+        assert_eq!(fixture.renders(), (1, 1, vec![1; GROUP_COUNT]));
+
+        fixture.pane.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(fixture.renders(), (2, 2, vec![1; GROUP_COUNT]));
+        fixture.expect_painted(cx, [red(); GROUP_COUNT]);
+        fixture.click_each_group(cx);
+    }
+
+    #[gpui::test]
+    fn a_notified_nested_view_redraws_alone(cx: &mut TestAppContext) {
+        let fixture = Fixture::open(cx);
+
+        fixture.recolor_group(cx, 1, blue());
+        assert_eq!(fixture.renders(), (2, 2, vec![1, 2, 1, 1]));
+        fixture.expect_painted(cx, [red(), blue(), red(), red()]);
+        fixture.click_each_group(cx);
+    }
+
+    #[gpui::test]
+    fn nested_views_stay_reusable_while_the_views_around_them_are_reused(cx: &mut TestAppContext) {
+        let fixture = Fixture::open(cx);
+
+        // The outer view is reused whole twice, so the groups aren't drawn,
+        // and then each group in turn redraws while the others are reused.
+        fixture.notify_root(cx);
+        fixture.notify_root(cx);
+        assert_eq!(fixture.renders(), (1, 1, vec![1; GROUP_COUNT]));
+        let mut colors = [red(); GROUP_COUNT];
+        for ix in 0..GROUP_COUNT {
+            colors[ix] = green();
+            fixture.recolor_group(cx, ix, green());
+            fixture.notify_root(cx);
+            fixture.expect_painted(cx, colors);
+        }
+        assert_eq!(fixture.renders(), (5, 5, vec![2; GROUP_COUNT]));
+        fixture.click_each_group(cx);
+    }
+
+    #[gpui::test]
+    fn a_refresh_or_a_resize_redraws_every_nested_view(cx: &mut TestAppContext) {
+        let fixture = Fixture::open(cx);
+
+        fixture
+            .window
+            .update(cx, |_, window, _| window.refresh())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(fixture.renders(), (2, 2, vec![2; GROUP_COUNT]));
+
+        cx.simulate_window_resize(fixture.window.into(), size(px(300.), px(250.)));
+        cx.run_until_parked();
+        assert_eq!(fixture.renders(), (3, 3, vec![3; GROUP_COUNT]));
+        fixture.expect_painted(cx, [red(); GROUP_COUNT]);
+    }
+
+    #[gpui::test]
+    fn a_nested_view_hidden_in_the_last_frame_redraws_when_shown(cx: &mut TestAppContext) {
+        let fixture = Fixture::open(cx);
+
+        // Hidden, the group is laid out but not painted.
+        fixture.pane.update(cx, |pane, cx| {
+            pane.hidden_group = Some(2);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        let painted = fixture.painted_groups(cx);
+        assert_eq!(painted.len(), GROUP_COUNT - 1);
+        assert!(painted.iter().all(|(top, _)| *top != 2. * GROUP_HEIGHT));
+
+        // What it painted two frames ago is gone, so it draws again.
+        fixture.pane.update(cx, |pane, cx| {
+            pane.hidden_group = None;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(fixture.renders(), (3, 3, vec![1, 1, 2, 1]));
+        fixture.expect_painted(cx, [red(); GROUP_COUNT]);
+        fixture.click_each_group(cx);
+    }
+
+    /// A view in a randomly built tree of cached views.
+    struct Node {
+        color: Hsla,
+        popover: bool,
+        children: Vec<Child>,
+    }
+
+    struct Child {
+        node: Entity<Node>,
+        height: f32,
+        hidden: bool,
+    }
+
+    impl Render for Node {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("node")
+                .flex()
+                .flex_col()
+                .size_full()
+                .overflow_hidden()
+                .bg(self.color)
+                .on_click(|_, _, _| {})
+                .when(self.popover, |this| {
+                    this.child(deferred(
+                        div()
+                            .id("popover")
+                            .size(px(6.))
+                            .bg(self.color.opacity(0.5))
+                            .on_click(|_, _, _| {}),
+                    ))
+                })
+                .children(self.children.iter().map(|child| {
+                    div()
+                        .w_full()
+                        .flex_none()
+                        .h(px(child.height))
+                        .when(child.hidden, |this| this.invisible())
+                        .child(
+                            child
+                                .node
+                                .clone()
+                                .cached(StyleRefinement::default().size_full()),
+                        )
+                }))
+        }
+    }
+
+    struct Tree {
+        node: Entity<Node>,
+    }
+
+    impl Render for Tree {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.node
+                    .clone()
+                    .cached(StyleRefinement::default().size_full()),
+            )
+        }
+    }
+
+    /// A node and its children, to draw the same tree from scratch.
+    struct NodeSnapshot {
+        color: Hsla,
+        popover: bool,
+        children: Vec<(NodeSnapshot, f32, bool)>,
+    }
+
+    impl NodeSnapshot {
+        fn of(node: &Entity<Node>, cx: &App) -> Self {
+            let node = node.read(cx);
+            Self {
+                color: node.color,
+                popover: node.popover,
+                children: node
+                    .children
+                    .iter()
+                    .map(|child| (Self::of(&child.node, cx), child.height, child.hidden))
+                    .collect(),
+            }
+        }
+
+        fn build(&self, cx: &mut App) -> Entity<Node> {
+            let children = self
+                .children
+                .iter()
+                .map(|(node, height, hidden)| Child {
+                    node: node.build(cx),
+                    height: *height,
+                    hidden: *hidden,
+                })
+                .collect();
+            cx.new(|_| Node {
+                color: self.color,
+                popover: self.popover,
+                children,
+            })
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct DrawnFrame {
+        quads: Vec<(
+            u32,
+            Bounds<ScaledPixels>,
+            ContentMask<ScaledPixels>,
+            Background,
+        )>,
+        hitboxes: Vec<Bounds<Pixels>>,
+    }
+
+    fn drawn_frame(window: AnyWindowHandle, cx: &mut TestAppContext) -> DrawnFrame {
+        cx.update_window(window, |_, window, _| {
+            let frame = &window.rendered_frame;
+            DrawnFrame {
+                quads: frame
+                    .scene
+                    .quads
+                    .iter()
+                    .map(|quad| (quad.order, quad.bounds, quad.content_mask, quad.background))
+                    .collect(),
+                hitboxes: frame.hitboxes.iter().map(|hitbox| hitbox.bounds).collect(),
+            }
+        })
+        .unwrap()
+    }
+
+    fn random_node(
+        rng: &mut StdRng,
+        depth: usize,
+        nodes: &mut Vec<Entity<Node>>,
+        cx: &mut App,
+    ) -> Entity<Node> {
+        let child_count = if depth == 0 {
+            0
+        } else {
+            rng.random_range(0..=3)
+        };
+        let children = (0..child_count)
+            .map(|_| Child {
+                node: random_node(rng, depth - 1, nodes, cx),
+                height: rng.random_range(10..=120) as f32,
+                hidden: false,
+            })
+            .collect();
+        let color = hsla(rng.random(), 0.5, 0.5, 1.);
+        let popover = rng.random_bool(0.2);
+        let node = cx.new(|_| Node {
+            color,
+            popover,
+            children,
+        });
+        nodes.push(node.clone());
+        node
+    }
+
+    /// Changes random parts of a tree of cached views, frame after frame, and
+    /// compares each frame with the same tree drawn from scratch.
+    #[gpui::test]
+    fn nested_views_draw_what_a_fresh_window_draws(cx: &mut TestAppContext) {
+        const WINDOW_SIZE: f32 = 400.;
+        for seed in 0..24 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut nodes = Vec::new();
+            let root = cx.update(|cx| random_node(&mut rng, 3, &mut nodes, cx));
+            let window = cx.open_window(size(px(WINDOW_SIZE), px(WINDOW_SIZE)), |_, _| Tree {
+                node: root.clone(),
+            });
+            cx.run_until_parked();
+
+            for step in 0..40 {
+                let changes = rng.random_range(1..=2);
+                for _ in 0..changes {
+                    let node = nodes[rng.random_range(0..nodes.len())].clone();
+                    match rng.random_range(0..7) {
+                        0 => node.update(cx, |node, cx| {
+                            node.color = hsla(rng.random(), 0.5, 0.5, 1.);
+                            cx.notify();
+                        }),
+                        1 => node.update(cx, |_, cx| cx.notify()),
+                        2 => node.update(cx, |node, cx| {
+                            node.popover = !node.popover;
+                            cx.notify();
+                        }),
+                        3 => node.update(cx, |node, cx| {
+                            if !node.children.is_empty() {
+                                let ix = rng.random_range(0..node.children.len());
+                                node.children[ix].height = rng.random_range(10..=120) as f32;
+                                cx.notify();
+                            }
+                        }),
+                        4 => node.update(cx, |node, cx| {
+                            if !node.children.is_empty() {
+                                let ix = rng.random_range(0..node.children.len());
+                                node.children[ix].hidden = !node.children[ix].hidden;
+                                cx.notify();
+                            }
+                        }),
+                        5 => window.update(cx, |_, _, cx| cx.notify()).unwrap(),
+                        _ => window.update(cx, |_, window, _| window.refresh()).unwrap(),
+                    }
+                }
+                cx.run_until_parked();
+                let drawn = drawn_frame(window.into(), cx);
+
+                let snapshot = cx.read(|cx| NodeSnapshot::of(&root, cx));
+                let fresh = cx.open_window(size(px(WINDOW_SIZE), px(WINDOW_SIZE)), |_, cx| Tree {
+                    node: snapshot.build(cx),
+                });
+                cx.run_until_parked();
+                let expected = drawn_frame(fresh.into(), cx);
+                fresh
+                    .update(cx, |_, window, _| window.remove_window())
+                    .unwrap();
+                assert_eq!(drawn, expected, "seed {seed}, step {step}");
+            }
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
 }
