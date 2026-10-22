@@ -5,7 +5,7 @@ UI framework of the [Zed](https://github.com/zed-industries/zed) editor, togethe
 platform for iOS and Android. GPUI fixes and the mobile work live here, next to each other, and
 [Mesa Hills Research's fork of GPUI Kit](https://github.com/mesa-hills-research/gpui_kit)
 builds on it. The crates are on crates.io as [`mhr-gpui`](https://crates.io/crates/mhr-gpui) and
-its siblings.
+its siblings, and [CHANGELOG.md](CHANGELOG.md) lists what each release changes.
 
 It follows the `gpui-pre` crates that GPUI Kit publishes, which are snapshots of Zed's gpui cut by
 GPUI Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
@@ -14,9 +14,10 @@ GPUI Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
 
 | Crates | Source | State |
 |---|---|---|
-| `mhr-gpui` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Published. Unchanged apart from their names and [a few changes](docs/upstream.md#changes-to-the-gpui-crates), such as a fix for variable font weights on Linux and Android, recent files in Windows jump lists, throttled animations that share frames, and test support for screenshot tests |
+| `mhr-gpui` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Published. Unchanged apart from their names and [a few changes](docs/upstream.md#changes-to-the-gpui-crates), such as a fix for variable font weights on Linux and Android, recent files in Windows jump lists, throttled animations that share frames, list scrollbars that hold steady over rows not drawn yet, cached views that stay cached inside other cached views, and test support for screenshot tests |
 | `mhr-gpui-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental and unpublished, see [Mobile](#mobile) |
 | `mhr-gpui-screenshot` (`crates/gpui_screenshot`) | This fork | Golden-image tests for GPUI views, unpublished, see [Screenshot tests](#screenshot-tests) |
+| `mhr-gpui-scroll-harness` (`crates/gpui_scroll_harness`) | This fork | Measures and films how smoothly a list's scrollbar moves, unpublished, see its [README](crates/gpui_scroll_harness/README.md) |
 
 ## Using it
 

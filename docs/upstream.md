@@ -99,12 +99,17 @@ and the workspace sets `rust-version` and pins the crates to each other with `=`
 
 ## Publishing
 
-The published crates share one version, set in each crate's `Cargo.toml` and in the `=` pins of
-`[workspace.dependencies]`, so a release bumps all of them together. Then:
+Each crate has its own version in its `Cargo.toml`, and the `=` pins in the workspace's
+`[workspace.dependencies]` follow them. A release gives a new version to every crate that changed
+since the last one and to every crate that pins one of those, and leaves the other crates alone.
+Version 0.1.1, for example, covers eight crates. `mhr-gpui` and four platform crates changed, and
+three more pin them. The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
+`git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
+the release by name, since cargo refuses a version that's already on crates.io:
 
 ```sh
-packages=$(cargo metadata --no-deps --format-version 1 \
-  | jq -j '.packages[] | select(.publish != []) | "-p \(.name) "')
+packages="-p mhr-gpui -p mhr-gpui-wgpu -p mhr-gpui-linux -p mhr-gpui-windows -p mhr-gpui-apple \
+  -p mhr-gpui-macos -p mhr-gpui-web -p mhr-gpui-platform"
 cargo publish --dry-run --locked $packages
 cargo publish --locked $packages
 ```
@@ -112,6 +117,7 @@ cargo publish --locked $packages
 Cargo packages the crates, builds each package against the others, and uploads them in
 dependency order. crates.io takes new versions of existing crates quickly, but it limits how fast
 one account creates new crates, so a release that adds a crate may have to wait and retry.
+[CHANGELOG.md](../CHANGELOG.md) lists what each release changes.
 
 ## Changes to the gpui crates
 
