@@ -104,8 +104,9 @@ Each crate has its own version in its `Cargo.toml`, and the `=` pins in the work
 since the last one and to every crate that pins one of those, and leaves the other crates alone.
 Version 0.1.1 covered eight crates, since `mhr-gpui` and four platform crates changed and three
 more pin them. Version 0.1.2 covers the same eight, since `mhr-gpui`, `mhr-gpui-apple` and
-`mhr-gpui-wgpu` changed and the other five pin `mhr-gpui`. The rest stay at 0.1.0, and the new
-versions pin them at `=0.1.0`.
+`mhr-gpui-wgpu` changed and the other five pin `mhr-gpui`. So does 0.1.3, where only `mhr-gpui`
+changed. The other seven pin it exactly, so each needs a new version for its pin to follow. The
+rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
 `git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
 the release by name, since cargo refuses a version that's already on crates.io:
 
