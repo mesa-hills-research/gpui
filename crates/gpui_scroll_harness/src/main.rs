@@ -15,6 +15,8 @@
 //! (`film-<scenario>.gif`) of frames drawn during the scroll.
 
 mod adopt;
+#[cfg(test)]
+mod animated_rows;
 mod film;
 mod metrics;
 mod run;

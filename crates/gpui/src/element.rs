@@ -505,7 +505,12 @@ impl<E: Element> Drawable<E> {
         cx: &mut App,
     ) -> Size<Pixels> {
         if matches!(&self.phase, ElementDrawPhase::Start) {
+            // A view at the root of the layout can tell how wide it will be laid out.
+            if matches!(self.element.id(), Some(ElementId::View(_))) {
+                window.pending_root_space = Some(available_space);
+            }
             self.request_layout(window, cx);
+            window.pending_root_space = None;
         }
 
         let layout_id = match mem::take(&mut self.phase) {

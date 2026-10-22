@@ -1362,6 +1362,10 @@ pub struct Window {
     long_press_timer: Option<Task<()>>,
     long_press_capture: Option<EntityId>,
     pub(crate) refreshing: bool,
+    /// The space `Drawable::layout_as_root` is laying a view out in, for that view's
+    /// `request_layout` to take. A cached view of measured height needs the width it is asked
+    /// to lay out at to know whether the height it remembered still holds.
+    pub(crate) pending_root_space: Option<Size<AvailableSpace>>,
     /// The number of the frame being drawn into `next_frame`, counting from 1.
     /// `rendered_frame` holds the frame before it.
     pub(crate) frame_number: u64,
@@ -2258,6 +2262,7 @@ impl Window {
             long_press_timer: None,
             long_press_capture: None,
             refreshing: false,
+            pending_root_space: None,
             frame_number: 1,
             activation_observers: SubscriberSet::new(),
             focus: None,

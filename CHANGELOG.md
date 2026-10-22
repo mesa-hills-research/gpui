@@ -15,6 +15,19 @@ detail.
   with the view's drawing. A cached view draws again when accessibility starts, to have nodes to
   copy afterwards.
 
+### Lists
+
+- `Entity::cached_measured` and `AnyView::cached_measured` make a list item a cached view whose
+  height is measured from its contents. A cached view took its size from its style alone, so a row
+  of a list could not be one. Such a row renders when it is first shown, when it is notified, when
+  the width it is laid out at or the text style around it changes, and when the window refreshes.
+  Otherwise it reuses what it drew and the height it measured, so a row that animates redraws
+  alone and the list's other rows stay as they were. On a list of 1,043 mixed rows, a frame in
+  which one row animates took 0.15 ms with 14 rows in view, against 0.29 ms when every row is an
+  element of the list's view, and 0.27 ms against 0.76 ms with 20 rows in view. The row has to be
+  the item itself, since only the root of a layout knows its width. Anywhere else it renders in
+  every frame, as an uncached view does.
+
 ### Text
 
 - A long line of text is shaped in segments of a few hundred bytes on Linux and Android, and each

@@ -46,6 +46,12 @@ impl AnyView {
         ViewElement::new(self).cached(style)
     }
 
+    /// Embed this view as a cached [`ViewElement`] of measured height, which a list can use for
+    /// its items. See [`Entity::cached_measured`].
+    pub fn cached_measured(self, style: StyleRefinement) -> ViewElement<AnyView> {
+        ViewElement::new(self).cached_measured(style)
+    }
+
     /// Convert this to a weak handle.
     pub fn downgrade(&self) -> AnyWeakView {
         AnyWeakView {
@@ -232,13 +238,31 @@ impl<T: Render> View for Entity<T> {
 }
 
 impl<T: Render> Entity<T> {
+    /// Embed this entity as a cached [`ViewElement`] whose height is measured from its contents
+    /// and remembered, so that a list can use it for an item of any height.
+    ///
+    /// `style` gives the view's width, such as `StyleRefinement::default().w_full()`. The first
+    /// time the view is laid out, and whenever the entity is notified or the width it is laid out
+    /// at changes, it renders and is measured. Otherwise it takes the height it measured and is
+    /// reused as [`Entity::cached`] does. The view must be the item itself, the element a list's
+    /// render function returns, because only the root of a layout knows its width. Anywhere else
+    /// it renders in every frame, as an uncached view does.
+    ///
+    /// A row of a [`list`](crate::list) that animates with this redraws alone, instead of
+    /// with every row the list shows.
+    #[track_caller]
+    pub fn cached_measured(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
+        ViewElement::new(self).cached_measured(style)
+    }
+
     /// Embed this entity as a cached [`ViewElement`] laid out at `style`.
     ///
     /// The rendered subtree is reused until the entity is notified (or the
     /// cached bounds / text style change), inside another cached view too,
     /// when the outer view redraws. Caching requires a definite size:
     /// a cached view is laid out from `style` and is *not* measured from its
-    /// contents. Use [`ViewElement::new`] (or `.child(entity)`) for the
+    /// contents. Use [`Entity::cached_measured`] to remember a height measured from
+    /// the contents, and [`ViewElement::new`] (or `.child(entity)`) for the
     /// uncached case.
     #[track_caller]
     pub fn cached(self, style: StyleRefinement) -> ViewElement<Entity<T>> {
@@ -253,6 +277,8 @@ pub struct ViewElement<V: View> {
     view: Option<V>,
     entity_id: Option<EntityId>,
     cached_style: Option<StyleRefinement>,
+    /// Whether a cached view takes its height from what it measured, rather than from its style.
+    measured: bool,
     #[cfg(debug_assertions)]
     source: &'static core::panic::Location<'static>,
 }
@@ -265,6 +291,7 @@ impl<V: View> ViewElement<V> {
         ViewElement {
             entity_id,
             cached_style: None,
+            measured: false,
             view: Some(view),
             #[cfg(debug_assertions)]
             source: core::panic::Location::caller(),
@@ -282,6 +309,14 @@ impl<V: View> ViewElement<V> {
     /// entity-backed by construction.
     pub(crate) fn cached(mut self, style: StyleRefinement) -> Self {
         self.cached_style = Some(style);
+        self
+    }
+
+    /// Like [`Self::cached`], with a height measured from the contents. See
+    /// [`Entity::cached_measured`].
+    pub(crate) fn cached_measured(mut self, style: StyleRefinement) -> Self {
+        self.cached_style = Some(style);
+        self.measured = true;
         self
     }
 }
@@ -304,6 +339,19 @@ pub(crate) struct ViewElementState {
     paint_frame: u64,
     cache_key: ViewElementCacheKey,
     accessed_entities: FxHashSet<EntityId>,
+    /// For a cached view of measured height, what it measured.
+    measured: Option<MeasuredSize>,
+}
+
+/// The height a cached view of measured height took at a width.
+#[derive(Clone)]
+struct MeasuredSize {
+    /// The width the view was asked to lay out at.
+    available_width: Pixels,
+    height: Pixels,
+    /// What the layout depended on that is not in the view's own state.
+    text_style: TextStyle,
+    rem_size: Pixels,
 }
 
 impl ViewElementState {
@@ -364,17 +412,22 @@ impl<V: View> Element for ViewElement<V> {
 
     fn request_layout(
         &mut self,
-        _id: Option<&GlobalElementId>,
+        id: Option<&GlobalElementId>,
         _inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
+        // Only a view at the root of the layout knows the space it's laid out in.
+        let root_space = window.pending_root_space.take();
         if let Some(entity_id) = self.entity_id {
             // Stateful path: create a reactive boundary.
             let view = &mut self.view;
             request_layout_view(
                 entity_id,
+                id,
                 self.cached_style.as_ref(),
+                self.measured,
+                root_space,
                 window,
                 cx,
                 &mut |window, cx| view.take().unwrap().render(window, cx).into_any_element(),
@@ -405,6 +458,7 @@ impl<V: View> Element for ViewElement<V> {
             prepaint_view(
                 entity_id,
                 global_id,
+                self.cached_style.is_some() && self.measured,
                 bounds,
                 element,
                 window,
@@ -462,7 +516,10 @@ impl Render for EmptyView {
 #[inline(never)]
 fn request_layout_view(
     entity_id: EntityId,
+    global_id: Option<&GlobalElementId>,
     cached_style: Option<&StyleRefinement>,
+    measured: bool,
+    root_space: Option<Size<AvailableSpace>>,
     window: &mut Window,
     cx: &mut App,
     render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
@@ -470,6 +527,15 @@ fn request_layout_view(
     window.with_rendered_view(entity_id, |window| {
         let caching_disabled = window.is_inspector_picking(cx);
         match cached_style {
+            Some(style) if measured && !caching_disabled => request_layout_measured_view(
+                entity_id,
+                global_id.unwrap(),
+                style,
+                root_space,
+                window,
+                cx,
+                render,
+            ),
             Some(style) if !caching_disabled => {
                 let mut root_style = Style::default();
                 root_style.refine(style);
@@ -482,6 +548,103 @@ fn request_layout_view(
                 (layout_id, Some(element))
             }
         }
+    })
+}
+
+/// The height a cached view of measured height took the last time, if it can be taken again for
+/// a layout `width` wide.
+fn measured_height(
+    window: &Window,
+    entity_id: EntityId,
+    global_id: &GlobalElementId,
+    width: Pixels,
+) -> Option<Pixels> {
+    let frame_number = window.frame_number;
+    if window.refreshing
+        || window.dirty_views.contains(&entity_id)
+        || !window.a11y.can_reuse_views(frame_number)
+    {
+        return None;
+    }
+    let key = (global_id.clone(), TypeId::of::<ViewElementState>());
+    let state = window
+        .next_frame
+        .element_states
+        .get(&key)
+        .or_else(|| window.rendered_frame.element_states.get(&key))?;
+    let state = state
+        .inner
+        .downcast_ref::<Option<ViewElementState>>()?
+        .as_ref()?;
+    let measured = state.measured.as_ref()?;
+    (state.prepaint_frame + 1 == frame_number
+        && state.paint_frame + 1 == frame_number
+        && measured.available_width == width
+        && measured.rem_size == window.rem_size()
+        && measured.text_style == window.text_style())
+    .then_some(measured.height)
+}
+
+/// Lays out a cached view of measured height. A view that is clean and was measured at this width
+/// is a leaf with the height it measured, and renders nothing. Any other view renders now, and
+/// its contents are laid out in a box of `style` whose height is whatever they come to.
+fn request_layout_measured_view(
+    entity_id: EntityId,
+    global_id: &GlobalElementId,
+    style: &StyleRefinement,
+    root_space: Option<Size<AvailableSpace>>,
+    window: &mut Window,
+    cx: &mut App,
+    render: &mut dyn FnMut(&mut Window, &mut App) -> AnyElement,
+) -> (LayoutId, Option<AnyElement>) {
+    let mut root_style = Style::default();
+    root_style.refine(style);
+    let width = match root_space {
+        Some(Size {
+            width: AvailableSpace::Definite(width),
+            ..
+        }) => Some(width),
+        _ => None,
+    };
+
+    if let Some(width) = width
+        && let Some(height) = measured_height(window, entity_id, global_id, width)
+    {
+        root_style.size.height = height.into();
+        let layout_id = window.request_layout(root_style, None, cx);
+        return (layout_id, None);
+    }
+
+    // The state is made here, so that the accessed entities are known, and finished when the
+    // view is prepainted.
+    window.with_element_state::<ViewElementState, _>(global_id, |_, window| {
+        let ((layout_id, element), accessed_entities) = cx.detect_accessed_entities(|cx| {
+            let mut element = render(window, cx);
+            let content = element.request_layout(window, cx);
+            (window.request_layout(root_style, [content], cx), element)
+        });
+        (
+            (layout_id, Some(element)),
+            ViewElementState {
+                prepaint_range: PrepaintStateIndex::default()..PrepaintStateIndex::default(),
+                paint_range: PaintIndex::default()..PaintIndex::default(),
+                prepaint_frame: 0,
+                paint_frame: 0,
+                cache_key: ViewElementCacheKey {
+                    bounds: Bounds::default(),
+                    content_mask: window.content_mask(),
+                    text_style: window.text_style(),
+                },
+                accessed_entities,
+                measured: width.map(|width| MeasuredSize {
+                    available_width: width,
+                    // Set when the view is prepainted.
+                    height: Pixels::ZERO,
+                    text_style: window.text_style(),
+                    rem_size: window.rem_size(),
+                }),
+            },
+        )
     })
 }
 
@@ -503,6 +666,7 @@ fn request_layout_component(
 fn prepaint_view(
     entity_id: EntityId,
     global_id: Option<&GlobalElementId>,
+    measured: bool,
     bounds: Bounds<Pixels>,
     element: &mut Option<AnyElement>,
     window: &mut Window,
@@ -512,6 +676,31 @@ fn prepaint_view(
     window.set_view_id(entity_id);
     window.with_rendered_view(entity_id, |window| {
         if let Some(mut element) = element.take() {
+            if measured && !window.is_inspector_picking(cx) {
+                // A cached view of measured height that rendered when it was laid out.
+                return Some(window.with_element_state::<ViewElementState, _>(
+                    global_id.unwrap(),
+                    |element_state, window| {
+                        let mut element_state = element_state
+                            .expect("a view of measured height makes its state when laid out");
+                        let prepaint_start = window.prepaint_index();
+                        let (_, accessed_entities) =
+                            cx.detect_accessed_entities(|cx| element.prepaint(window, cx));
+                        element_state.accessed_entities.extend(accessed_entities);
+                        element_state.prepaint_range = prepaint_start..window.prepaint_index();
+                        element_state.prepaint_frame = window.frame_number;
+                        element_state.cache_key = ViewElementCacheKey {
+                            bounds,
+                            content_mask: window.content_mask(),
+                            text_style: window.text_style(),
+                        };
+                        if let Some(measured) = &mut element_state.measured {
+                            measured.height = bounds.size.height;
+                        }
+                        (element, element_state)
+                    },
+                ));
+            }
             element.prepaint(window, cx);
             return Some(element);
         }
@@ -522,6 +711,10 @@ fn prepaint_view(
                 let content_mask = window.content_mask();
                 let text_style = window.text_style();
                 let frame_number = window.frame_number;
+                // A view that was reused for its height keeps it when it draws again.
+                let measured = element_state
+                    .as_ref()
+                    .and_then(|element_state| element_state.measured.clone());
 
                 // A view inside another cached view that redraws is reused too,
                 // unless it was notified itself.
@@ -570,6 +763,7 @@ fn prepaint_view(
                             content_mask,
                             text_style,
                         },
+                        measured,
                     },
                 )
             },
@@ -643,10 +837,10 @@ fn paint_component(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AnyWindowHandle, App, Background, Bounds, ContentMask, Context, Entity, FocusHandle, Hsla,
-        Modifiers, Pixels, Role, ScaledPixels, StyleRefinement, TestAppContext, VisualTestContext,
-        Window, WindowHandle, accesskit, blue, deferred, div, green, hsla, point, prelude::*, px,
-        red, size,
+        AnyWindowHandle, App, Background, Bounds, ContentMask, Context, Entity, FocusHandle,
+        FollowMode, Hsla, ListAlignment, ListState, Modifiers, Pixels, Role, ScaledPixels,
+        StyleRefinement, TestAppContext, VisualTestContext, Window, WindowHandle, accesskit, blue,
+        deferred, div, green, hsla, list, point, prelude::*, px, red, size,
     };
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
     use std::{cell::Cell, rc::Rc};
@@ -1535,6 +1729,375 @@ mod tests {
             window
                 .update(cx, |_, window, _| window.remove_window())
                 .unwrap();
+            cx.run_until_parked();
+        }
+    }
+
+    /// A row of text that wraps to the width it's laid out at.
+    struct TextRow {
+        words: usize,
+        color: Hsla,
+        /// Words added by something outside the row's state, which doesn't notify it.
+        extra_words: Rc<Cell<usize>>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for TextRow {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .w_full()
+                .p_1()
+                .bg(self.color)
+                .child("word ".repeat(self.words + self.extra_words.get()))
+        }
+    }
+
+    /// How a list draws its rows.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum RowCaching {
+        /// The rows are elements of the view that has the list.
+        Plain,
+        /// Each row is its own view, cached at a height it measures.
+        Measured,
+        /// Each row is its own view in a box of the list, which isn't the item itself.
+        MeasuredInABox,
+    }
+
+    struct RowList {
+        state: ListState,
+        rows: Vec<Entity<TextRow>>,
+        caching: RowCaching,
+        text_size: Pixels,
+        /// The width of the box the list is in, which isn't the window's.
+        width: Pixels,
+        extra_words: Rc<Cell<usize>>,
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for RowList {
+        fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let rows = self.rows.clone();
+            let caching = self.caching;
+            let extra_words = self.extra_words.clone();
+            // Only a plain list builds its rows from the rows' state, and so redraws when they change.
+            let row_contents: Vec<(usize, Hsla)> = if caching == RowCaching::Plain {
+                rows.iter()
+                    .map(|row| {
+                        let row = row.read(cx);
+                        (row.words, row.color)
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let list = list(self.state.clone(), move |ix, _, _| match caching {
+                RowCaching::Plain => {
+                    let (words, color) = row_contents[ix];
+                    div()
+                        .w_full()
+                        .p_1()
+                        .bg(color)
+                        .child("word ".repeat(words + extra_words.get()))
+                        .into_any_element()
+                }
+                RowCaching::Measured => rows[ix]
+                    .clone()
+                    .cached_measured(StyleRefinement::default().w_full())
+                    .into_any_element(),
+                RowCaching::MeasuredInABox => div()
+                    .w_full()
+                    .child(
+                        rows[ix]
+                            .clone()
+                            .cached_measured(StyleRefinement::default().w_full()),
+                    )
+                    .into_any_element(),
+            })
+            .size_full();
+            div()
+                .h_full()
+                .w(self.width)
+                .text_size(self.text_size)
+                .child(list)
+        }
+    }
+
+    const ROW_COUNT: usize = 24;
+    const LIST_WIDTH: f32 = 200.;
+    const LIST_HEIGHT: f32 = 240.;
+
+    struct ListFixture {
+        window: WindowHandle<RowList>,
+        state: ListState,
+        rows: Vec<Entity<TextRow>>,
+        row_renders: Rc<Cell<usize>>,
+        list_renders: Rc<Cell<usize>>,
+        extra_words: Rc<Cell<usize>>,
+    }
+
+    impl ListFixture {
+        fn open(cx: &mut TestAppContext, caching: RowCaching, seed: u64) -> Self {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let row_renders = Rc::new(Cell::new(0));
+            let list_renders = Rc::new(Cell::new(0));
+            let extra_words = Rc::new(Cell::new(0));
+            let state = ListState::new(ROW_COUNT, ListAlignment::Top, px(60.));
+            let window = cx.open_window(size(px(LIST_WIDTH), px(LIST_HEIGHT)), |_, cx| {
+                let rows = (0..ROW_COUNT)
+                    .map(|_| {
+                        cx.new(|_| TextRow {
+                            words: rng.random_range(1..=12),
+                            color: hsla(rng.random(), 0.5, 0.5, 1.),
+                            extra_words: extra_words.clone(),
+                            renders: row_renders.clone(),
+                        })
+                    })
+                    .collect();
+                RowList {
+                    state: state.clone(),
+                    rows,
+                    caching,
+                    text_size: px(16.),
+                    width: px(LIST_WIDTH),
+                    extra_words: extra_words.clone(),
+                    renders: list_renders.clone(),
+                }
+            });
+            cx.run_until_parked();
+            let rows = window.update(cx, |list, _, _| list.rows.clone()).unwrap();
+            Self {
+                window,
+                state,
+                rows,
+                row_renders,
+                list_renders,
+                extra_words,
+            }
+        }
+
+        fn set_words(&self, cx: &mut TestAppContext, ix: usize, words: usize) {
+            self.rows[ix].update(cx, |row, cx| {
+                row.words = words;
+                cx.notify();
+            });
+            cx.run_until_parked();
+        }
+
+        /// Changes the width of the list without changing the window's.
+        fn set_width(&self, cx: &mut TestAppContext, width: Pixels) {
+            self.window
+                .update(cx, |list, _, cx| {
+                    list.width = width;
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        fn set_text_size(&self, cx: &mut TestAppContext, text_size: Pixels) {
+            self.window
+                .update(cx, |list, _, cx| {
+                    list.text_size = text_size;
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        fn notify_list(&self, cx: &mut TestAppContext) {
+            self.window.update(cx, |_, _, cx| cx.notify()).unwrap();
+            cx.run_until_parked();
+        }
+
+        /// What the list drew, and how it's scrolled.
+        fn drawn(&self, cx: &mut TestAppContext) -> (DrawnFrame, usize, Pixels, Pixels) {
+            let drawn = drawn_frame(self.window.into(), cx);
+            let top = self.state.logical_scroll_top();
+            (
+                drawn,
+                top.item_ix,
+                top.offset_in_item,
+                self.state.max_offset_for_scrollbar().y,
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn the_rows_of_a_list_that_are_clean_are_not_rendered_again(cx: &mut TestAppContext) {
+        let fixture = ListFixture::open(cx, RowCaching::Measured, 1);
+        let rendered = fixture.row_renders.get();
+        assert!(rendered > 0);
+
+        // The list redraws, with the same rows.
+        fixture.notify_list(cx);
+        fixture.notify_list(cx);
+        assert_eq!(fixture.row_renders.get(), rendered);
+        assert_eq!(fixture.list_renders.get(), 3);
+
+        // One row changes, and only it renders. Rows below it move with its height.
+        let plain = ListFixture::open(cx, RowCaching::Plain, 1);
+        let words_before = fixture.rows[1].read_with(cx, |row, _| row.words);
+        let words = words_before + 20;
+        fixture.set_words(cx, 1, words);
+        plain.set_words(cx, 1, words);
+        assert_eq!(fixture.row_renders.get(), rendered + 1);
+        assert_eq!(fixture.drawn(cx), plain.drawn(cx));
+    }
+
+    #[gpui::test]
+    fn a_row_in_a_box_is_rendered_with_every_frame_of_the_list(cx: &mut TestAppContext) {
+        let fixture = ListFixture::open(cx, RowCaching::MeasuredInABox, 2);
+        let plain = ListFixture::open(cx, RowCaching::Plain, 2);
+        let rendered = fixture.row_renders.get();
+        fixture.notify_list(cx);
+        plain.notify_list(cx);
+        assert!(fixture.row_renders.get() > rendered);
+        assert_eq!(fixture.drawn(cx), plain.drawn(cx));
+        fixture.set_words(cx, 0, 30);
+        plain.set_words(cx, 0, 30);
+        assert_eq!(fixture.drawn(cx), plain.drawn(cx));
+    }
+
+    #[gpui::test]
+    fn rows_measured_at_one_width_are_measured_again_at_another(cx: &mut TestAppContext) {
+        let fixture = ListFixture::open(cx, RowCaching::Measured, 3);
+        let plain = ListFixture::open(cx, RowCaching::Plain, 3);
+        for width in [150., 240., 200., 90.] {
+            for fixture in [&fixture, &plain] {
+                cx.simulate_window_resize(fixture.window.into(), size(px(width), px(LIST_HEIGHT)));
+                cx.run_until_parked();
+            }
+            assert_eq!(fixture.drawn(cx), plain.drawn(cx), "{width}");
+        }
+    }
+
+    #[gpui::test]
+    fn rows_measured_at_one_width_of_the_list_are_measured_again_at_another(
+        cx: &mut TestAppContext,
+    ) {
+        let fixture = ListFixture::open(cx, RowCaching::Measured, 5);
+        let plain = ListFixture::open(cx, RowCaching::Plain, 5);
+        for width in [px(120.), px(200.), px(80.), px(160.)] {
+            fixture.set_width(cx, width);
+            plain.set_width(cx, width);
+            assert_eq!(fixture.drawn(cx), plain.drawn(cx), "{width:?}");
+        }
+    }
+
+    #[gpui::test]
+    fn a_cached_row_that_grows_at_the_end_of_a_list_is_followed(cx: &mut TestAppContext) {
+        let fixture = ListFixture::open(cx, RowCaching::Measured, 7);
+        let plain = ListFixture::open(cx, RowCaching::Plain, 7);
+        for fixture in [&fixture, &plain] {
+            fixture.state.set_follow_mode(FollowMode::Tail);
+            fixture.notify_list(cx);
+        }
+        assert_eq!(fixture.drawn(cx), plain.drawn(cx));
+        for words in (1..40).step_by(3) {
+            fixture.set_words(cx, ROW_COUNT - 1, words);
+            plain.set_words(cx, ROW_COUNT - 1, words);
+            assert_eq!(fixture.drawn(cx), plain.drawn(cx), "{words}");
+            assert_eq!(
+                fixture.state.is_scrolled_to_end(),
+                plain.state.is_scrolled_to_end()
+            );
+            assert!(fixture.state.is_following_tail());
+        }
+    }
+
+    #[gpui::test]
+    fn a_refresh_measures_the_rows_again(cx: &mut TestAppContext) {
+        let fixture = ListFixture::open(cx, RowCaching::Measured, 6);
+        let plain = ListFixture::open(cx, RowCaching::Plain, 6);
+        // The rows change without being notified, as when they read something a notification
+        // doesn't reach, and only a refresh draws them again.
+        for extra_words in [9, 0, 4] {
+            for fixture in [&fixture, &plain] {
+                fixture.extra_words.set(extra_words);
+                fixture
+                    .window
+                    .update(cx, |_, window, _| window.refresh())
+                    .unwrap();
+                cx.run_until_parked();
+            }
+            assert_eq!(fixture.drawn(cx), plain.drawn(cx), "{extra_words}");
+        }
+    }
+
+    #[gpui::test]
+    fn rows_measured_in_one_text_style_are_measured_again_in_another(cx: &mut TestAppContext) {
+        let fixture = ListFixture::open(cx, RowCaching::Measured, 4);
+        let plain = ListFixture::open(cx, RowCaching::Plain, 4);
+        for text_size in [px(24.), px(12.), px(16.)] {
+            fixture.set_text_size(cx, text_size);
+            plain.set_text_size(cx, text_size);
+            assert_eq!(fixture.drawn(cx), plain.drawn(cx), "{text_size:?}");
+        }
+    }
+
+    #[gpui::test]
+    fn a_list_of_cached_rows_draws_what_a_plain_list_draws(cx: &mut TestAppContext) {
+        for seed in 0..16 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let fixture = ListFixture::open(cx, RowCaching::Measured, seed);
+            let plain = ListFixture::open(cx, RowCaching::Plain, seed);
+            for step in 0..60 {
+                let changes = rng.random_range(1..=2);
+                for _ in 0..changes {
+                    match rng.random_range(0..9) {
+                        8 => {
+                            let width = px(rng.random_range(80..=260) as f32);
+                            fixture.set_width(cx, width);
+                            plain.set_width(cx, width);
+                        }
+                        7 => {
+                            let text_size = px(rng.random_range(10..=24) as f32);
+                            fixture.set_text_size(cx, text_size);
+                            plain.set_text_size(cx, text_size);
+                        }
+                        0..=2 => {
+                            let ix = rng.random_range(0..ROW_COUNT);
+                            let words = rng.random_range(1..=30);
+                            fixture.set_words(cx, ix, words);
+                            plain.set_words(cx, ix, words);
+                        }
+                        3 => {
+                            fixture.notify_list(cx);
+                            plain.notify_list(cx);
+                        }
+                        4 | 5 => {
+                            let distance = px(rng.random_range(-120..=120) as f32);
+                            fixture.state.scroll_by(distance);
+                            plain.state.scroll_by(distance);
+                            fixture.notify_list(cx);
+                            plain.notify_list(cx);
+                        }
+                        _ => {
+                            let width = rng.random_range(90..=260) as f32;
+                            for fixture in [&fixture, &plain] {
+                                cx.simulate_window_resize(
+                                    fixture.window.into(),
+                                    size(px(width), px(LIST_HEIGHT)),
+                                );
+                                cx.run_until_parked();
+                            }
+                        }
+                    }
+                }
+                assert_eq!(
+                    fixture.drawn(cx),
+                    plain.drawn(cx),
+                    "seed {seed}, step {step}"
+                );
+            }
+            for fixture in [fixture, plain] {
+                fixture
+                    .window
+                    .update(cx, |_, window, _| window.remove_window())
+                    .unwrap();
+            }
             cx.run_until_parked();
         }
     }

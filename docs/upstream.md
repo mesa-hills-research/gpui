@@ -219,6 +219,18 @@ adds the same line.
   mouse listeners. A cached view isn't reused while the previous frame has no nodes, which is
   the first frame after accessibility starts. `mhr-gpui-apple`'s copy of `window.rs` under
   `vendor/gpui` follows it.
+- **Cached list items of measured height**, in `mhr-gpui`'s `src/view.rs`, `src/element.rs` and
+  `src/window.rs`. `Entity::cached_measured` and `AnyView::cached_measured` embed a view that
+  takes the height it measured, where `cached` takes its size from a style. `Drawable::layout_as_root`
+  hands a view at the root of the layout the space it is laid out in, and the view reuses the
+  height it measured when it is clean, was measured at the same width, text style and rem size,
+  and the window isn't refreshing. Its layout is then a leaf of that height. Otherwise it renders
+  while it is laid out, inside a box of its style, and takes its height from where the layout puts
+  the box. `ViewElementState` keeps what the view measured. The tests at the end of `view.rs`
+  compare lists of such rows with plain lists through notifications, scrolling, resizing, changes
+  of text style and of the list's width, and following the end. `crates/gpui_scroll_harness/src/animated_rows.rs`
+  times a list of 1,043 rows with one that animates. `mhr-gpui-apple`'s copy of `window.rs` under
+  `vendor/gpui` follows it.
 - **Long lines shaped in segments**, in `mhr-gpui`'s `src/text_system/line_layout.rs`,
   `src/text_system/line_layout/segments.rs` and `src/platform.rs`, and `mhr-gpui-wgpu`'s
   `src/cosmic_text_system.rs`. Shaping a long plain paragraph as one line took time in proportion
