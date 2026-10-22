@@ -3,9 +3,9 @@ use scheduler::Instant;
 use std::{cell::Cell, rc::Rc, time::Duration};
 
 use crate::{
-    AnyElement, App, Element, ElementId, GlobalElementId, InspectorElementId, IntoElement,
-    ParentElement, SpringAnimation, SpringConfig, SpringPlayback, SpringState, SpringTarget,
-    Window,
+    AnyElement, App, Bounds, Element, ElementId, FrameTime, GlobalElementId, InspectorElementId,
+    IntoElement, PaintEffect, PaintEffectRecord, ParentElement, Pixels, SpringAnimation,
+    SpringConfig, SpringPlayback, SpringState, SpringTarget, Window,
 };
 
 pub use easing::*;
@@ -119,6 +119,34 @@ pub trait AnimationExt {
             element: Some(self),
             animator: Box::new(animator),
             animations: animations.into(),
+        }
+    }
+
+    /// Render this component or element with an animation that changes how it paints and nothing
+    /// else, with the [`PaintEffect`] that `effect` returns for the animation's value.
+    ///
+    /// The element is built and laid out once, and then painted in each frame with the effect
+    /// for that frame. A view the element is in that is cached stays cached while the effect
+    /// runs, and a frame draws the window's root view again and replays what the cached views
+    /// drew, with the effect applied. Use [`Self::with_animation`] for an animation that changes
+    /// the element itself.
+    ///
+    /// Like [`Self::with_animation`], the effect holds still at its start, or at its end for a
+    /// oneshot animation, while [`App::reduce_motion`](crate::App::reduce_motion) is set.
+    fn with_paint_animation(
+        self,
+        id: impl Into<ElementId>,
+        animation: Animation,
+        effect: impl Fn(f32) -> PaintEffect + 'static,
+    ) -> PaintAnimationElement<Self>
+    where
+        Self: Sized,
+    {
+        PaintAnimationElement {
+            id: id.into(),
+            element: Some(self),
+            animation,
+            effect: Rc::new(effect),
         }
     }
 
@@ -536,6 +564,151 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     }
 }
 
+/// An element painted with an animated [`PaintEffect`]. Created by
+/// [`AnimationExt::with_paint_animation`].
+pub struct PaintAnimationElement<E> {
+    id: ElementId,
+    element: Option<E>,
+    animation: Animation,
+    effect: Rc<dyn Fn(f32) -> PaintEffect>,
+}
+
+impl<E: IntoElement + 'static> IntoElement for PaintAnimationElement<E> {
+    type Element = PaintAnimationElement<E>;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+struct PaintAnimationState {
+    start: Instant,
+}
+
+/// When a paint effect started and how it runs, kept with the effect's record in a frame.
+#[derive(Clone)]
+pub(crate) struct PaintAnimationTiming {
+    start: Instant,
+    animation: Animation,
+}
+
+impl PaintAnimationTiming {
+    /// The value of the animation at `frame_time`, and whether it has ended.
+    pub(crate) fn value(&self, frame_time: &FrameTime) -> (f32, bool) {
+        let animation = &self.animation;
+        if frame_time.reduce_motion || animation.duration.is_zero() {
+            return (
+                (animation.easing)(if animation.oneshot { 1.0 } else { 0.0 }),
+                true,
+            );
+        }
+        let elapsed = if animation.synced && !animation.duration.is_zero() {
+            let elapsed = frame_time.now.saturating_duration_since(frame_time.epoch);
+            // Reduce modulo the duration before f32 conversion, which loses sub-second precision at scale.
+            Duration::from_nanos((elapsed.as_nanos() % animation.duration.as_nanos()) as u64)
+        } else {
+            frame_time.now.saturating_duration_since(self.start)
+        };
+        let mut delta = elapsed.as_secs_f32() / animation.duration.as_secs_f32();
+        let mut done = false;
+        if delta > 1.0 {
+            if animation.oneshot {
+                done = true;
+                delta = 1.0;
+            } else {
+                delta %= 1.0;
+            }
+        }
+        let delta = (animation.easing)(delta);
+        debug_assert!(delta.is_finite(), "animated value should be finite");
+        (delta, done)
+    }
+
+    /// When the next frame of the animation is due, if it isn't the next frame drawn. That
+    /// is the next point of the grid its frame rate caps it to, if it has one.
+    pub(crate) fn next_frame_at(&self, frame_time: &FrameTime) -> Option<Instant> {
+        let max_fps = self
+            .animation
+            .max_fps
+            .filter(|max_fps| max_fps.is_finite() && *max_fps > 0.0)?;
+        let interval = Duration::from_secs_f32(1.0 / max_fps);
+        let interval_nanos = (interval.as_nanos() as u64).max(1);
+        let since_epoch = frame_time
+            .now
+            .saturating_duration_since(frame_time.epoch)
+            .as_nanos() as u64;
+        let point = since_epoch / interval_nanos + 1;
+        Some(frame_time.epoch + Duration::from_nanos(point * interval_nanos))
+    }
+}
+
+impl<E: IntoElement + 'static> Element for PaintAnimationElement<E> {
+    type RequestLayoutState = (AnyElement, Instant);
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        Some(self.id.clone())
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (crate::LayoutId, Self::RequestLayoutState) {
+        let start = window.with_element_state(global_id.unwrap(), |state, window| {
+            let state = state.unwrap_or_else(|| PaintAnimationState {
+                start: window.frame_time().now,
+            });
+            (state.start, state)
+        });
+        let mut element = self
+            .element
+            .take()
+            .expect("should only be called once")
+            .into_any_element();
+        let layout_id = element.request_layout(window, cx);
+        (layout_id, (element, start))
+    }
+
+    fn prepaint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        (element, _): &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        element.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        (element, start): &mut Self::RequestLayoutState,
+        _: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let timing = PaintAnimationTiming {
+            start: *start,
+            animation: self.animation.clone(),
+        };
+        window.with_paint_effect(
+            PaintEffectRecord::new(bounds, timing, self.effect.clone()),
+            |window| element.paint(window, cx),
+        );
+    }
+}
+
 mod easing {
     use std::f32::consts::PI;
 
@@ -597,8 +770,8 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use crate::{
-        Animation, Context, InteractiveElement, Pixels, Render, SpringAnimation, SpringConfig,
-        TestAppContext, WindowHandle, div, prelude::*, px, size,
+        Animation, App, Context, Entity, InteractiveElement, Pixels, Render, SpringAnimation,
+        SpringConfig, StyleRefinement, TestAppContext, WindowHandle, div, prelude::*, px, size,
     };
 
     use super::*;
@@ -1116,5 +1289,489 @@ mod tests {
 
         assert_eq!(simulate_next_frame(&window, cx), 0);
         assert_eq!(*rendered_deltas.borrow(), vec![0.0]);
+    }
+
+    /// A view with a spinner that turns with a paint animation.
+    struct PaintSpinnerView {
+        animation: Animation,
+        show: bool,
+        renders: Rc<RefCell<usize>>,
+        values: Rc<RefCell<Vec<f32>>>,
+    }
+
+    impl Render for PaintSpinnerView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            *self.renders.borrow_mut() += 1;
+            let values = self.values.clone();
+            div().size_full().when(self.show, |this| {
+                this.child(div().size(px(10.)).bg(crate::red()).with_paint_animation(
+                    "spinner",
+                    self.animation.clone(),
+                    move |value| {
+                        values.borrow_mut().push(value);
+                        PaintEffect::opacity(value)
+                    },
+                ))
+            })
+        }
+    }
+
+    /// A window whose root draws a spinner of its own above a cached view with one.
+    struct PaintRootView {
+        pane: Entity<PaintSpinnerView>,
+        animation: Animation,
+        show: bool,
+        values: Rc<RefCell<Vec<f32>>>,
+    }
+
+    impl Render for PaintRootView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let values = self.values.clone();
+            div()
+                .size_full()
+                .when(self.show, |this| {
+                    this.child(div().size(px(10.)).bg(crate::red()).with_paint_animation(
+                        "root spinner",
+                        self.animation.clone(),
+                        move |value| {
+                            values.borrow_mut().push(value);
+                            PaintEffect::opacity(value)
+                        },
+                    ))
+                })
+                .child(
+                    self.pane
+                        .clone()
+                        .cached(StyleRefinement::default().w_full().h(px(10.))),
+                )
+        }
+    }
+
+    struct PaintFixture {
+        window: WindowHandle<PaintRootView>,
+        pane: Entity<PaintSpinnerView>,
+        pane_renders: Rc<RefCell<usize>>,
+        pane_values: Rc<RefCell<Vec<f32>>>,
+        root_values: Rc<RefCell<Vec<f32>>>,
+    }
+
+    impl PaintFixture {
+        fn open(cx: &mut TestAppContext, animation: Animation) -> Self {
+            let pane_renders = Rc::new(RefCell::new(0));
+            let pane_values = Rc::new(RefCell::new(Vec::new()));
+            let root_values = Rc::new(RefCell::new(Vec::new()));
+            let window = cx.open_window(size(px(100.), px(100.)), {
+                let pane_renders = pane_renders.clone();
+                let pane_values = pane_values.clone();
+                let root_values = root_values.clone();
+                move |_, cx| {
+                    let pane = cx.new(|_| PaintSpinnerView {
+                        animation: animation.clone(),
+                        show: true,
+                        renders: pane_renders,
+                        values: pane_values,
+                    });
+                    PaintRootView {
+                        pane,
+                        animation,
+                        show: true,
+                        values: root_values,
+                    }
+                }
+            });
+            cx.run_until_parked();
+            let pane = window.update(cx, |root, _, _| root.pane.clone()).unwrap();
+            Self {
+                window,
+                pane,
+                pane_renders,
+                pane_values,
+                root_values,
+            }
+        }
+
+        /// The opacity of each spinner in the frame drawn last, from the top.
+        fn spinner_alphas(&self, cx: &mut TestAppContext) -> Vec<f32> {
+            self.window
+                .update(cx, |_, window, _| {
+                    let scale_factor = window.scale_factor();
+                    let mut spinners: Vec<_> = window
+                        .rendered_frame
+                        .scene
+                        .quads
+                        .iter()
+                        .filter(|quad| quad.bounds.size.width.0 / scale_factor == 10.)
+                        .map(|quad| (quad.bounds.origin.y.0, quad.background.solid.a))
+                        .collect();
+                    spinners.sort_by(|a, b| a.0.total_cmp(&b.0));
+                    spinners.into_iter().map(|(_, alpha)| alpha).collect()
+                })
+                .unwrap()
+        }
+
+        fn advance(&self, cx: &mut TestAppContext, duration: Duration) -> usize {
+            cx.executor().advance_clock(duration);
+            simulate_next_frame(&self.window, cx)
+        }
+    }
+
+    fn synced() -> Animation {
+        Animation::new(Duration::from_secs(1)).repeat_synced()
+    }
+
+    #[gpui::test]
+    fn test_paint_animation_runs_in_a_view_that_is_reused(cx: &mut TestAppContext) {
+        let fixture = PaintFixture::open(cx, synced());
+        assert_eq!(*fixture.pane_renders.borrow(), 1);
+
+        let mut seen = Vec::new();
+        for _ in 0..8 {
+            assert_eq!(fixture.advance(cx, Duration::from_millis(100)), 1);
+            let alphas = fixture.spinner_alphas(cx);
+            assert_eq!(alphas.len(), 2);
+            // The spinner in the cached view turns as the one above it, which is drawn again.
+            assert_eq!(alphas[0], alphas[1]);
+            seen.push(alphas[0]);
+        }
+        assert_eq!(
+            *fixture.pane_renders.borrow(),
+            1,
+            "the view isn't drawn again"
+        );
+        assert!(seen.windows(2).all(|pair| pair[0] < pair[1]), "{seen:?}");
+        assert!(
+            (seen[0] - 0.1).abs() < 0.05 && (seen[7] - 0.8).abs() < 0.05,
+            "{seen:?}"
+        );
+        // The effect is worked out once for each spinner in each frame.
+        assert_eq!(
+            fixture.pane_values.borrow().len(),
+            fixture.root_values.borrow().len()
+        );
+    }
+
+    #[gpui::test]
+    fn test_paint_animation_keeps_running_when_its_view_draws_again(cx: &mut TestAppContext) {
+        let fixture = PaintFixture::open(cx, Animation::new(Duration::from_secs(1)).repeat());
+        fixture.advance(cx, Duration::from_millis(300));
+        let before = fixture.spinner_alphas(cx)[1];
+
+        fixture.pane.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(*fixture.pane_renders.borrow(), 2);
+        let after = fixture.spinner_alphas(cx)[1];
+        assert!(
+            before > 0.25 && (after - before).abs() < 0.05,
+            "{before} {after}"
+        );
+
+        fixture.advance(cx, Duration::from_millis(300));
+        assert!(fixture.spinner_alphas(cx)[1] > after + 0.25);
+    }
+
+    #[gpui::test]
+    fn test_paint_animation_stops_asking_for_frames_when_it_ends(cx: &mut TestAppContext) {
+        let fixture = PaintFixture::open(cx, Animation::new(Duration::from_secs(1)));
+        assert_eq!(fixture.advance(cx, Duration::from_millis(400)), 1);
+        assert!(fixture.spinner_alphas(cx)[0] < 0.6);
+        assert_eq!(fixture.advance(cx, Duration::from_millis(700)), 1);
+        // It ended in that frame, painted as at its end, and nothing asks for another.
+        assert_eq!(fixture.spinner_alphas(cx), [1., 1.]);
+        assert_eq!(fixture.advance(cx, Duration::from_millis(100)), 0);
+        assert_eq!(fixture.spinner_alphas(cx), [1., 1.]);
+        assert_eq!(*fixture.pane_renders.borrow(), 1);
+    }
+
+    #[gpui::test]
+    fn test_paint_animation_respects_reduced_motion(cx: &mut TestAppContext) {
+        cx.update(|cx| cx.set_reduce_motion(true));
+        let fixture = PaintFixture::open(cx, synced());
+        assert_eq!(fixture.spinner_alphas(cx), [0., 0.]);
+        assert_eq!(fixture.advance(cx, Duration::from_millis(300)), 0);
+        assert_eq!(fixture.spinner_alphas(cx), [0., 0.]);
+
+        let oneshot = PaintFixture::open(cx, Animation::new(Duration::from_secs(1)));
+        assert_eq!(oneshot.spinner_alphas(cx), [1., 1.]);
+        assert_eq!(oneshot.advance(cx, Duration::from_millis(300)), 0);
+    }
+
+    #[gpui::test]
+    fn test_throttled_paint_animation_draws_on_a_timer(cx: &mut TestAppContext) {
+        let fixture = PaintFixture::open(cx, synced().with_max_fps(10.));
+        let draws = |fixture: &PaintFixture, cx: &mut TestAppContext| {
+            fixture
+                .window
+                .update(cx, |_, window, _| window.frame_number)
+                .unwrap()
+        };
+
+        // No frame is asked for. A draw is due when the timer fires.
+        assert_eq!(simulate_next_frame(&fixture.window, cx), 0);
+        let first = draws(&fixture, cx);
+        let first_alphas = fixture.spinner_alphas(cx);
+        cx.executor().advance_clock(Duration::from_millis(105));
+        cx.run_until_parked();
+        assert_eq!(draws(&fixture, cx), first + 1);
+        let second_alphas = fixture.spinner_alphas(cx);
+        assert_eq!(second_alphas[0], second_alphas[1]);
+        assert!(second_alphas[0] > first_alphas[0] + 0.05);
+
+        // A second of time is ten draws, and the cached view isn't drawn again.
+        for _ in 0..1000 {
+            cx.executor().advance_clock(Duration::from_millis(1));
+            cx.run_until_parked();
+        }
+        let drawn = draws(&fixture, cx) - first - 1;
+        assert!(
+            (9..=11).contains(&drawn),
+            "{drawn} draws in a second at 10 fps"
+        );
+        assert_eq!(*fixture.pane_renders.borrow(), 1);
+    }
+
+    #[gpui::test]
+    fn test_frames_stop_when_no_paint_animation_is_running(cx: &mut TestAppContext) {
+        let fixture = PaintFixture::open(cx, synced());
+        // The views are drawn without their spinners, but one frame was asked for before.
+        fixture.pane.update(cx, |pane, cx| {
+            pane.show = false;
+            cx.notify();
+        });
+        fixture
+            .window
+            .update(cx, |root, _, cx| {
+                root.show = false;
+                cx.notify();
+            })
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(fixture.spinner_alphas(cx).len(), 0);
+        // Frames are asked for once, however many draws there were since.
+        assert_eq!(fixture.advance(cx, Duration::from_millis(100)), 1);
+        assert_eq!(fixture.advance(cx, Duration::from_millis(100)), 0);
+    }
+
+    #[gpui::test]
+    fn test_one_frame_is_asked_for_however_often_the_window_draws(cx: &mut TestAppContext) {
+        let fixture = PaintFixture::open(cx, synced());
+        for _ in 0..3 {
+            fixture.pane.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        }
+        assert_eq!(fixture.advance(cx, Duration::from_millis(100)), 1);
+    }
+
+    /// A view with a spinner of 10 pixels above its children, which are cached views.
+    struct SpinnerNode {
+        /// Each child and its height, which is that of its spinner and of the views below it.
+        children: Vec<(Entity<SpinnerNode>, f32)>,
+    }
+
+    impl SpinnerNode {
+        /// A tree of views `depth` deep with its nodes, and its height.
+        fn tree(
+            depth: usize,
+            nodes: &mut Vec<Entity<SpinnerNode>>,
+            cx: &mut App,
+        ) -> (Entity<Self>, f32) {
+            let children: Vec<_> = if depth == 0 {
+                Vec::new()
+            } else {
+                (0..2)
+                    .map(|_| SpinnerNode::tree(depth - 1, nodes, cx))
+                    .collect()
+            };
+            let height = 10. + children.iter().map(|(_, height)| height).sum::<f32>();
+            let node = cx.new(|_| SpinnerNode { children });
+            nodes.push(node.clone());
+            (node, height)
+        }
+    }
+
+    impl Render for SpinnerNode {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(
+                    div()
+                        .size(px(10.))
+                        .flex_none()
+                        .bg(crate::red())
+                        .with_paint_animation("spinner", synced(), PaintEffect::opacity),
+                )
+                .children(self.children.iter().map(|(child, height)| {
+                    child.clone().cached(
+                        StyleRefinement::default()
+                            .w_full()
+                            .h(px(*height))
+                            .flex_none(),
+                    )
+                }))
+        }
+    }
+
+    struct SpinnerTree {
+        root: Entity<SpinnerNode>,
+        height: f32,
+        /// How many more spinners are drawn ahead of the tree, which move the records of the
+        /// views below them.
+        leading: usize,
+    }
+
+    impl Render for SpinnerTree {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .size_full()
+                .children((0..self.leading).map(|ix| {
+                    div()
+                        .absolute()
+                        .size(px(10.))
+                        .bg(crate::red())
+                        .with_paint_animation(("leading", ix), synced(), PaintEffect::opacity)
+                }))
+                // A spinner that is drawn again in every frame, to compare the others with.
+                .child(
+                    div()
+                        .size(px(10.))
+                        .flex_none()
+                        .bg(crate::red())
+                        .with_paint_animation("spinner", synced(), PaintEffect::opacity),
+                )
+                .child(
+                    self.root.clone().cached(
+                        StyleRefinement::default()
+                            .w_full()
+                            .h(px(self.height))
+                            .flex_none(),
+                    ),
+                )
+        }
+    }
+
+    /// Spinners in cached views below cached views turn as they do in a view that is drawn
+    /// again, frame after frame, while views are notified and the window is notified.
+    #[gpui::test]
+    fn test_paint_animations_in_nested_cached_views_turn_together(cx: &mut TestAppContext) {
+        use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
+        for seed in 0..12 {
+            let mut rng = StdRng::seed_from_u64(seed);
+            let mut nodes = Vec::new();
+            let (root, height) = cx.update(|cx| SpinnerNode::tree(3, &mut nodes, cx));
+            let window = cx.open_window(size(px(100.), px(1000.)), {
+                let root = root.clone();
+                move |_, _| SpinnerTree {
+                    root,
+                    height,
+                    leading: 0,
+                }
+            });
+            cx.run_until_parked();
+
+            for step in 0..60 {
+                match rng.random_range(0..4) {
+                    0 => {
+                        let node = nodes[rng.random_range(0..nodes.len())].clone();
+                        node.update(cx, |_, cx| cx.notify());
+                    }
+                    1 => window
+                        .update(cx, |tree, _, cx| {
+                            tree.leading += 1;
+                            cx.notify();
+                        })
+                        .unwrap(),
+                    _ => {}
+                }
+                cx.executor()
+                    .advance_clock(Duration::from_millis(rng.random_range(1..=300)));
+                simulate_next_frame(&window, cx);
+                let alphas = window
+                    .update(cx, |_, window, _| {
+                        let scale_factor = window.scale_factor();
+                        window
+                            .rendered_frame
+                            .scene
+                            .quads
+                            .iter()
+                            .filter(|quad| quad.bounds.size.width.0 / scale_factor == 10.)
+                            .map(|quad| quad.background.solid.a)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap();
+                // The spinner of the window, and 1 + 2 + 4 + 8 in the views, all at the same point of
+                // the same animation.
+                let leading = window.update(cx, |tree, _, _| tree.leading).unwrap();
+                assert_eq!(
+                    alphas.len(),
+                    nodes.len() + 1 + leading,
+                    "seed {seed}, step {step}"
+                );
+                assert!(
+                    alphas.iter().all(|alpha| *alpha == alphas[0]),
+                    "seed {seed}, step {step}: {alphas:?}"
+                );
+            }
+            window
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+
+    /// A view whose spinner is an icon turned by a paint animation.
+    struct IconView;
+
+    impl Render for IconView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                crate::canvas(
+                    |_, _, _| (),
+                    |bounds, _, window, cx| {
+                        let icon = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="4" height="10"/></svg>"#;
+                        window
+                            .paint_svg(
+                                bounds,
+                                "icon.svg".into(),
+                                Some(icon),
+                                crate::TransformationMatrix::unit(),
+                                crate::red(),
+                                cx,
+                            )
+                            .unwrap();
+                    },
+                )
+                .size(px(10.))
+                .with_paint_animation("icon", synced(), |value| {
+                    PaintEffect::rotation(crate::radians(value * std::f32::consts::TAU))
+                }),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn test_paint_animation_turns_an_icon(cx: &mut TestAppContext) {
+        let window = cx.open_window(size(px(100.), px(100.)), |_, _| IconView);
+        let turned = |cx: &mut TestAppContext| {
+            window
+                .update(cx, |_, window, _| {
+                    let sprites = &window.rendered_frame.scene.monochrome_sprites;
+                    assert_eq!(sprites.len(), 1);
+                    sprites[0].transformation.rotation_scale
+                })
+                .unwrap()
+        };
+        cx.run_until_parked();
+        let at_start = turned(cx);
+        assert_eq!(at_start, [[1., 0.], [0., 1.]]);
+
+        // A quarter of a second into a second, a quarter turn.
+        cx.executor().advance_clock(Duration::from_millis(250));
+        simulate_next_frame(&window, cx);
+        let quarter = turned(cx);
+        assert!(
+            quarter[0][0].abs() < 0.05 && (quarter[1][0] - 1.).abs() < 0.05,
+            "{quarter:?}"
+        );
     }
 }

@@ -219,6 +219,21 @@ adds the same line.
   mouse listeners. A cached view isn't reused while the previous frame has no nodes, which is
   the first frame after accessibility starts. `mhr-gpui-apple`'s copy of `window.rs` under
   `vendor/gpui` follows it.
+- **Paint animations**, in `mhr-gpui`'s `src/elements/animation.rs`, `src/scene.rs` and
+  `src/window.rs`. An animation notified the view that held the element, so each frame drew that
+  view and the views above it. `AnimationExt::with_paint_animation` lays an element out and
+  prepaints it once, and paints it in every frame with a `PaintEffect`, an opacity and a rotation
+  of sprites, that the animation's value makes. `Scene` keeps a stack of effects. It applies them
+  to the copy of a primitive that it draws, and it keeps the primitive as it was in its paint
+  operations. `Frame::paint_effects` records the operations each element painted, with its timing,
+  and `PaintIndex` holds a position in the records, so that `Window::reuse_paint` copies the
+  records of a reused view with their operations moved, works out the effects again at the time of
+  the frame, and replays the operations with each effect pushed and popped around its own. After a
+  draw the window asks for the next frame, or sets a timer for the next point of a throttled
+  animation's grid, while a record's animation hasn't ended, and that frame draws the root view and
+  notifies no view. `mhr-gpui-apple`'s copies of `scene.rs` and `window.rs` under `vendor/gpui`
+  follow them. The tests at the end of `animation.rs` and `scene.rs` cover it, and
+  `crates/gpui_screenshot/tests/spinner_frames.rs` times a spinner in a pane of rows.
 - **Cached list items of measured height**, in `mhr-gpui`'s `src/view.rs`, `src/element.rs` and
   `src/window.rs`. `Entity::cached_measured` and `AnyView::cached_measured` embed a view that
   takes the height it measured, where `cached` takes its size from a style. `Drawable::layout_as_root`

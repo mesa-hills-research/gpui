@@ -13,17 +13,18 @@ use crate::{
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
     Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent,
-    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, Path, Pixels,
-    PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow, Point,
-    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
-    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
-    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
-    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
-    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
-    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
-    WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+    MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent, PaintAnimationTiming,
+    PaintEffect, Path, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
+    PlatformWindow, Point, PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render,
+    RenderGlyphParams, RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge,
+    SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow,
+    SharedString, Size, StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription,
+    SystemWindowTab, SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task,
+    TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
+    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
+    WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point, prelude::*, px, rems,
+    size, transparent_black,
 };
 
 use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
@@ -1000,6 +1001,8 @@ pub(crate) struct Frame {
     pub(crate) input_handlers: Vec<Option<PlatformInputHandler>>,
     pub(crate) tooltip_requests: Vec<Option<TooltipRequest>>,
     pub(crate) cursor_styles: Vec<CursorStyleRequest>,
+    /// The elements that painted with an animated effect, in the order they started to paint.
+    pub(crate) paint_effects: Vec<PaintEffectRecord>,
     #[cfg(any(test, feature = "test-support"))]
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
@@ -1032,6 +1035,7 @@ pub(crate) struct PaintIndex {
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
     a11y_listeners_index: usize,
+    paint_effects_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
@@ -1121,6 +1125,11 @@ impl PaintIndex {
                 from.a11y_listeners_index,
                 to.a11y_listeners_index,
             ),
+            paint_effects_index: rebase_index(
+                self.paint_effects_index,
+                from.paint_effects_index,
+                to.paint_effects_index,
+            ),
             tab_handle_index: rebase_index(
                 self.tab_handle_index,
                 from.tab_handle_index,
@@ -1130,6 +1139,50 @@ impl PaintIndex {
                 .line_layout_index
                 .rebased(&from.line_layout_index, &to.line_layout_index),
         }
+    }
+}
+
+/// The time a frame is drawn at, which the animations of the frame go by.
+#[derive(Clone, Copy)]
+pub(crate) struct FrameTime {
+    pub(crate) now: Instant,
+    /// The start of the clock that synced animations share.
+    pub(crate) epoch: Instant,
+    pub(crate) reduce_motion: bool,
+}
+
+/// An element that painted with an animated effect, kept in the frame so that a view that is
+/// reused paints the effect again, at the time of the frame that reuses it.
+#[derive(Clone)]
+pub(crate) struct PaintEffectRecord {
+    /// What the element painted, as a range of the scene's paint operations.
+    ops: Range<usize>,
+    bounds: Bounds<Pixels>,
+    timing: PaintAnimationTiming,
+    effect: Rc<dyn Fn(f32) -> PaintEffect>,
+    /// Whether the animation has ended.
+    done: bool,
+}
+
+impl PaintEffectRecord {
+    pub(crate) fn new(
+        bounds: Bounds<Pixels>,
+        timing: PaintAnimationTiming,
+        effect: Rc<dyn Fn(f32) -> PaintEffect>,
+    ) -> Self {
+        Self {
+            ops: 0..0,
+            bounds,
+            timing,
+            effect,
+            done: false,
+        }
+    }
+
+    /// The effect at `frame_time`, and whether the animation has ended by then.
+    fn at(&self, frame_time: &FrameTime) -> (PaintEffect, bool) {
+        let (value, done) = self.timing.value(frame_time);
+        ((self.effect)(value), done)
     }
 }
 
@@ -1155,6 +1208,7 @@ impl Frame {
             input_handlers: Vec::new(),
             tooltip_requests: Vec::new(),
             cursor_styles: Vec::new(),
+            paint_effects: Vec::new(),
 
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds: FxHashMap::default(),
@@ -1179,6 +1233,7 @@ impl Frame {
         self.input_handlers.clear();
         self.tooltip_requests.clear();
         self.cursor_styles.clear();
+        self.paint_effects.clear();
         self.hitboxes.clear();
         self.window_control_hitboxes.clear();
         self.deferred_draws.clear();
@@ -1366,6 +1421,12 @@ pub struct Window {
     /// `request_layout` to take. A cached view of measured height needs the width it is asked
     /// to lay out at to know whether the height it remembered still holds.
     pub(crate) pending_root_space: Option<Size<AvailableSpace>>,
+    /// The time the frame being drawn is drawn at.
+    frame_time: FrameTime,
+    /// A timer that draws the window when the next frame of a throttled paint animation is due.
+    paint_effect_timer: Option<Task<()>>,
+    /// Whether a frame is already asked for to draw the next step of the paint animations.
+    paint_effect_frame_pending: Rc<Cell<bool>>,
     /// The number of the frame being drawn into `next_frame`, counting from 1.
     /// `rendered_frame` holds the frame before it.
     pub(crate) frame_number: u64,
@@ -2263,6 +2324,13 @@ impl Window {
             long_press_capture: None,
             refreshing: false,
             pending_root_space: None,
+            frame_time: FrameTime {
+                now: cx.background_executor().now(),
+                epoch: cx.synced_animation_epoch,
+                reduce_motion: cx.reduce_motion(),
+            },
+            paint_effect_timer: None,
+            paint_effect_frame_pending: Rc::default(),
             frame_number: 1,
             activation_observers: SubscriberSet::new(),
             focus: None,
@@ -3459,6 +3527,11 @@ impl Window {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
+        self.frame_time = FrameTime {
+            now: cx.background_executor().now(),
+            epoch: cx.synced_animation_epoch,
+            reduce_motion: cx.reduce_motion(),
+        };
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
@@ -3534,6 +3607,7 @@ impl Window {
         mem::swap(&mut self.rendered_frame, &mut self.next_frame);
         self.next_frame.clear();
         self.frame_number += 1;
+        self.schedule_paint_effect_frames(cx);
         let current_focus_path = self.rendered_frame.focus_path();
         let current_window_active = self.rendered_frame.window_active;
         let mut focus_before_listeners = self.focus;
@@ -4063,6 +4137,127 @@ impl Window {
         );
     }
 
+    /// Replays the scene operations of `range` of the rendered frame, applying again the effects
+    /// of the elements that painted with an animated effect, at the time of this frame.
+    fn reuse_scene(&mut self, range: &Range<PaintIndex>, target: &PaintIndex) {
+        let scene_range = range.start.scene_index..range.end.scene_index;
+        let effects = range.start.paint_effects_index..range.end.paint_effects_index;
+        if effects.is_empty() {
+            self.next_frame
+                .scene
+                .replay(scene_range, &self.rendered_frame.scene);
+            return;
+        }
+
+        // The scene is replayed in pieces, with each effect pushed where its element started
+        // and popped where it ended. The records move to this frame's scene with it.
+        let frame_time = self.frame_time;
+        let mut applied = SmallVec::<[(PaintEffect, Point<ScaledPixels>); 4]>::new();
+        let mut boundaries = SmallVec::<[(usize, bool, usize); 8]>::new();
+        let scale_factor = self.scale_factor();
+        for (ix, record) in self.rendered_frame.paint_effects[effects]
+            .iter()
+            .enumerate()
+        {
+            let (effect, done) = record.at(&frame_time);
+            applied.push((effect, record.bounds.center().scale(scale_factor)));
+            let mut moved = record.clone();
+            moved.ops = rebase_index(
+                record.ops.start,
+                range.start.scene_index,
+                target.scene_index,
+            )
+                ..rebase_index(record.ops.end, range.start.scene_index, target.scene_index);
+            moved.done = done;
+            self.next_frame.paint_effects.push(moved);
+            if !record.ops.is_empty() {
+                // At one place, the effects that end come first, the innermost first, and then
+                // the effects that start, the outermost first.
+                boundaries.push((record.ops.start, true, ix));
+                boundaries.push((record.ops.end, false, usize::MAX - ix));
+            }
+        }
+        boundaries.sort_unstable_by_key(|(place, starts, order)| (*place, *starts, *order));
+
+        let mut replayed = scene_range.start;
+        for (place, starts, order) in boundaries {
+            self.next_frame
+                .scene
+                .replay(replayed..place, &self.rendered_frame.scene);
+            replayed = place;
+            if starts {
+                let (effect, center) = applied[order];
+                self.next_frame.scene.push_effect(effect, center);
+            } else {
+                self.next_frame.scene.pop_effect();
+            }
+        }
+        self.next_frame
+            .scene
+            .replay(replayed..scene_range.end, &self.rendered_frame.scene);
+    }
+
+    /// Paints with the effect of `record` while `f` runs, and keeps the record in the frame
+    /// for views that are reused.
+    pub(crate) fn with_paint_effect<R>(
+        &mut self,
+        mut record: PaintEffectRecord,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+        let (effect, done) = record.at(&self.frame_time);
+        record.done = done;
+        let center = record.bounds.center().scale(self.scale_factor());
+        let start = self.next_frame.scene.len();
+        record.ops = start..start;
+        let ix = self.next_frame.paint_effects.len();
+        self.next_frame.paint_effects.push(record);
+        self.next_frame.scene.push_effect(effect, center);
+        let result = f(self);
+        self.next_frame.scene.pop_effect();
+        self.next_frame.paint_effects[ix].ops.end = self.next_frame.scene.len();
+        result
+    }
+
+    pub(crate) fn frame_time(&self) -> &FrameTime {
+        &self.frame_time
+    }
+
+    /// Asks for the frame that draws the next step of the animated effects the rendered frame
+    /// painted with, at the next frame, or when a throttled animation is due.
+    fn schedule_paint_effect_frames(&mut self, cx: &mut App) {
+        let frame_time = self.frame_time;
+        let mut next_frame = false;
+        let mut due = None::<Instant>;
+        for record in &self.rendered_frame.paint_effects {
+            if record.done {
+                continue;
+            }
+            match record.timing.next_frame_at(&frame_time) {
+                None => next_frame = true,
+                Some(at) => due = Some(due.map_or(at, |soonest| soonest.min(at))),
+            }
+        }
+        self.paint_effect_timer = None;
+        if next_frame {
+            // No view is notified, so this draws the root view again and reuses the others.
+            if !self.paint_effect_frame_pending.replace(true) {
+                let pending = self.paint_effect_frame_pending.clone();
+                self.on_next_frame(move |window, _| {
+                    pending.set(false);
+                    window.invalidator.set_dirty(true);
+                });
+            }
+        } else if let Some(due) = due {
+            let delay = due.saturating_duration_since(cx.background_executor().now());
+            self.paint_effect_timer = Some(self.spawn(cx, async move |cx| {
+                cx.background_executor().timer(delay).await;
+                cx.update(|window, _| window.invalidator.set_dirty(true))
+                    .ok();
+            }));
+        }
+    }
+
     pub(crate) fn paint_index(&self) -> PaintIndex {
         PaintIndex {
             scene_index: self.next_frame.scene.len(),
@@ -4073,6 +4268,7 @@ impl Window {
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
             a11y_listeners_index: self.a11y.listener_index(),
+            paint_effects_index: self.next_frame.paint_effects.len(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
@@ -4120,12 +4316,10 @@ impl Window {
         self.a11y
             .reuse_listeners(range.start.a11y_listeners_index..range.end.a11y_listeners_index);
 
-        self.text_system
-            .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
-        self.next_frame.scene.replay(
-            range.start.scene_index..range.end.scene_index,
-            &self.rendered_frame.scene,
+        self.text_system.reuse_layouts(
+            range.start.line_layout_index.clone()..range.end.line_layout_index.clone(),
         );
+        self.reuse_scene(&range, &target);
 
         let frame_number = self.frame_number;
         self.rendered_frame.update_cached_view_states(
