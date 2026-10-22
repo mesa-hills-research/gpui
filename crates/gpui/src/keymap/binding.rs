@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use std::rc::Rc;
 
 use crate::{
@@ -30,6 +31,21 @@ impl Clone for KeyBinding {
 
 impl KeyBinding {
     /// Construct a new keybinding from the given data. Panics on parse error.
+    ///
+    /// `keystrokes` holds one or more keystrokes separated by spaces, each written as
+    /// [`Keystroke::parse`] describes.
+    ///
+    /// A chord that types a symbol can be written as the symbol (`ctrl-|`) or with Shift on its
+    /// key (`ctrl-shift-\`). Platforms send Ctrl+Shift+\ as `ctrl-|`, and both spellings match
+    /// it. The binding shows as written, so `ctrl-shift-\` reads as Ctrl+Shift+\ in a menu.
+    /// Older versions of GPUI match only the symbol, so an app that supports them writes that.
+    /// Write a chord one way throughout an app's keymaps, since `Unbind` removes only a binding
+    /// spelled the same.
+    ///
+    /// Shift on a key means the symbol a US keyboard types. `ctrl-shift-2` is Ctrl+@, which a UK
+    /// keyboard types with Shift+', and the chord on its Shift+2 types `"` and needs `ctrl-"`.
+    /// Layouts that type digits with Shift, such as a French one, send the digit, so
+    /// `ctrl-shift-1` never matches there.
     pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
         let context_predicate =
             context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());

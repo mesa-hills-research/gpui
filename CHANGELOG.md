@@ -5,6 +5,22 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## Unreleased
+
+### Key bindings
+
+- A binding with Shift on a symbol key, such as `ctrl-shift-\`, matches the symbol the platforms
+  send. Windows, Linux and macOS send Ctrl+Shift+\ on a US keyboard as `ctrl-|`, and the web sends
+  `ctrl-shift-|`. A binding written with Shift on the key matched neither, so it could not fire,
+  except on Windows in a keymap loaded with the platform's keyboard mapper.
+  `Keystroke::should_match` now reads Shift on one of the 21 symbol keys of a US keyboard as the
+  symbol it types, so `ctrl-shift-\`, `ctrl-|` and `ctrl-shift-|` are one chord whichever is bound
+  or typed. A binding shows as written, a keystroke that matched before still matches, and letters
+  and named keys keep their Shift. A chord bound in both spellings is two bindings for one
+  keystroke, ordered like any two. Where a layout's Shift types another symbol, such as `"` on
+  Shift+2 of a UK keyboard, bind the symbol the layout sends. The documentation of
+  `KeyBinding::new` says what to write.
+
 ## 0.1.3
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,

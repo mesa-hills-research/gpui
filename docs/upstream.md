@@ -277,6 +277,25 @@ adds the same line.
   closer. Wrapping follows the positions. Of 1,800 layouts of 300 random paragraphs of 1 to 10 KB at
   six widths, 23 (1.3%) put one word on the other side of a line end than the whole line does, each
   time a line end within a fraction of a pixel of the wrap width.
+- **Shift on a symbol key in key bindings**, in `mhr-gpui`'s `src/platform/keystroke.rs`, with
+  documentation in `src/keymap/binding.rs`. Windows, Linux and macOS send Ctrl+Shift+\ on a US
+  keyboard as `ctrl-|`, since they drop Shift from every key that isn't a letter or a named key,
+  and the web sends `ctrl-shift-|`. `Keystroke::parse` keeps Shift and the key `\` in
+  `ctrl-shift-\`, and `should_match` compared modifiers and key exactly, so the binding never
+  fired. Only Windows turned it into `ctrl-|`, in `WindowsKeyboardMapper::map_key_equivalent`, and
+  only for a keymap loaded through `KeyBinding::load` with the platform's keyboard mapper.
+  `KeyBinding::new` and the other platforms never did. `should_match` now folds Shift into the
+  symbol on both keystrokes before it compares them, for the 21 keys of a US keyboard that carry
+  two symbols. `ctrl-shift-\`, `ctrl-|` and `ctrl-shift-|` match one another whichever is bound
+  and whichever is typed, and the other modifiers must agree. A `KeybindingKeystroke` keeps the
+  spelling it was written with, so menus, palettes and the Windows mapper's display fields don't
+  change, and a keystroke that matched before still matches. A chord bound in both spellings is two
+  bindings for one keystroke, ordered like any two, and `Unbind` still compares spelled keystrokes.
+  The symbols are those of a US keyboard. A UK keyboard types `"` with Shift+2 and `~` on its `#`
+  key, German, French and Czech keyboards type many of these symbols on other keys or with AltGr,
+  and French and Czech keyboards send the digit for Ctrl+Shift+1. An app binds the symbol such a
+  layout sends, and `ctrl-shift-1` can't match on a French or Czech one. The tests at the end of
+  `keystroke.rs`, `keymap.rs` and `key_dispatch.rs` cover it.
 
 ## The mobile crate
 
