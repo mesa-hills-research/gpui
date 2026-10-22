@@ -82,6 +82,20 @@
 //! available. In the future, we may want to add prepaint information more
 //! generally to [`Element::write_a11y_info`], but for now that's not necessary.
 //!
+//! #### Cached views
+//!
+//! A [cached view] that is reused doesn't prepaint or paint, so it can't push
+//! its nodes again. The builder keeps a record of the previous frame instead,
+//! indexed like the prepaint and paint records of [`Window`]. A cached view
+//! remembers where its nodes sit in that record, and when it is reused, the
+//! nodes in that range are copied into the new frame as children of the node
+//! being built, together with their bounds, focus handles and action
+//! listeners. If the previous frame wasn't built with accessibility active,
+//! there is nothing to copy and cached views draw again
+//! ([`A11y::can_reuse_views`]).
+//!
+//! [cached view]: crate::Entity::cached
+//!
 //! ### Responding to actions
 //!
 //! On adapter creation, we provide a callback to the adapter, which can be used
@@ -95,6 +109,7 @@
 //! - [`StatefulInteractiveElement::on_a11y_action`], which is a public-facing API
 //!
 //! These are cleared at the start of a frame, and re-populated during painting.
+//! A reused cached view moves its listeners over from the previous frame.
 //!
 //! [`NodeId`]: accesskit::NodeId
 
@@ -107,6 +122,7 @@ use accesskit::{Action, NodeId, TreeUpdate};
 use collections::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
+use std::ops::Range;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -118,6 +134,35 @@ pub(crate) const ROOT_NODE_ID: NodeId = NodeId(0);
 /// A listener for an accessibility action on a specific node.
 pub(crate) type A11yActionListener =
     Box<dyn FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static>;
+
+/// A listener for an action on a node, as registered while painting.
+pub(crate) struct A11yListener {
+    node_id: NodeId,
+    action: Action,
+    /// Taken out while the listener runs, and when a reused cached view moves
+    /// it into the next frame.
+    listener: Option<A11yActionListener>,
+}
+
+/// The accessibility state of a finished frame, which the cached views reused
+/// in the next frame copy their part of.
+#[derive(Default)]
+struct PreviousFrame {
+    /// The frame that built it.
+    frame_number: Option<u64>,
+    /// The nodes in the order they were finished, as in [`A11yNodeBuilder`].
+    nodes: Vec<(NodeId, accesskit::Node)>,
+    /// How many nodes sit above each of `nodes` in the tree, the window's
+    /// node being the top.
+    depths: Vec<usize>,
+    focus: Option<NodeId>,
+    active_descendant: Option<NodeId>,
+    focus_ids: FxHashMap<NodeId, FocusId>,
+    node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
+    action_listeners: Vec<A11yListener>,
+    #[cfg(debug_assertions)]
+    node_info: FxHashMap<NodeId, debug::NodeDebugInfo>,
+}
 
 /// Per-window accessibility state.
 ///
@@ -148,7 +193,14 @@ pub(crate) struct A11y {
     pub(crate) nodes: A11yNodeBuilder,
     pub(crate) focus_ids: FxHashMap<NodeId, FocusId>,
     pub(crate) node_bounds: FxHashMap<NodeId, Bounds<Pixels>>,
-    pub(crate) action_listeners: FxHashMap<NodeId, Vec<(Action, A11yActionListener)>>,
+    /// The listeners registered while painting, in the order they were
+    /// registered. [`Window::paint_index`] records a position in this list.
+    pub(crate) action_listeners: Vec<A11yListener>,
+    /// The number of the frame that the state above was built for, if
+    /// accessibility was active in it.
+    recorded_frame: Option<u64>,
+    /// What the previous frame built, which a reused cached view copies from.
+    previous: PreviousFrame,
     /// The window's title, used to label the root node so assistive
     /// technology can tell windows apart.
     window_title: Option<SharedString>,
@@ -176,7 +228,9 @@ impl A11y {
             nodes: A11yNodeBuilder::new(),
             focus_ids: FxHashMap::default(),
             node_bounds: FxHashMap::default(),
-            action_listeners: FxHashMap::default(),
+            action_listeners: Vec::new(),
+            recorded_frame: None,
+            previous: PreviousFrame::default(),
             window_title,
             last_focus_without_node: None,
             debug: debug::A11yDebug::default(),
@@ -271,12 +325,159 @@ impl A11y {
         }
     }
 
-    /// Clear per-frame state and push the root node to start a new frame.
-    pub(crate) fn begin_frame(&mut self) {
-        self.focus_ids.clear();
-        self.node_bounds.clear();
-        self.action_listeners.clear();
+    /// Keep what the last frame built for the cached views that the new one
+    /// reuses, clear per-frame state and push the root node to start frame
+    /// `frame_number`.
+    pub(crate) fn begin_frame(&mut self, frame_number: u64) {
+        self.previous = PreviousFrame {
+            frame_number: self.recorded_frame.replace(frame_number),
+            nodes: std::mem::take(&mut self.nodes.all_nodes),
+            depths: std::mem::take(&mut self.nodes.depths),
+            focus: self.nodes.focus,
+            active_descendant: self.nodes.active_descendant,
+            focus_ids: std::mem::take(&mut self.focus_ids),
+            node_bounds: std::mem::take(&mut self.node_bounds),
+            action_listeners: std::mem::take(&mut self.action_listeners),
+            #[cfg(debug_assertions)]
+            node_info: std::mem::take(&mut self.nodes.node_info),
+        };
         self.nodes.begin_frame(self.window_title.as_ref());
+    }
+
+    /// Whether the cached views drawn in the previous frame can be reused in
+    /// frame `frame_number`. Their nodes are copied from what the previous
+    /// frame built, which only exists if accessibility was active then.
+    pub(crate) fn can_reuse_views(&self, frame_number: u64) -> bool {
+        !self.is_active() || self.previous.frame_number == frame_number.checked_sub(1)
+    }
+
+    /// Registers a listener for `action` on `node_id`.
+    pub(crate) fn push_action_listener(
+        &mut self,
+        node_id: NodeId,
+        action: Action,
+        listener: A11yActionListener,
+    ) {
+        self.action_listeners.push(A11yListener {
+            node_id,
+            action,
+            listener: Some(listener),
+        });
+    }
+
+    /// The position in the nodes built so far, which is where a cached view's
+    /// nodes start and end.
+    pub(crate) fn node_index(&self) -> usize {
+        self.nodes.all_nodes.len()
+    }
+
+    /// The position in the listeners registered so far.
+    pub(crate) fn listener_index(&self) -> usize {
+        self.action_listeners.len()
+    }
+
+    /// Copies the nodes that the previous frame finished between the
+    /// positions `range`, for a cached view that is reused. The nodes that the
+    /// view had at its top become children of the node being built, as they
+    /// were before, and the rest keep their place below them.
+    pub(crate) fn reuse_nodes(&mut self, range: Range<usize>) {
+        if !self.is_active() || range.is_empty() {
+            return;
+        }
+        let previous = &self.previous;
+        let (Some(nodes), Some(depths)) = (
+            previous.nodes.get(range.clone()),
+            previous.depths.get(range.clone()),
+        ) else {
+            log::error!(
+                "a11y: a reused view's nodes {range:?} are missing from the previous frame"
+            );
+            return;
+        };
+        // A view draws whole subtrees, so its top nodes are its shallowest.
+        let top = depths.iter().copied().min().unwrap_or_default();
+        let new_top = self.nodes.ids_stack.len();
+        let mut focus_reused = false;
+        let mut active_descendant_reused = false;
+        for ((id, node), depth) in nodes.iter().zip(depths) {
+            if !self.nodes.can_push(*id) {
+                continue;
+            }
+            if let Some(parent) = self.nodes.nodes_stack.last_mut()
+                && *depth == top
+            {
+                parent.push_child(*id);
+            }
+            self.nodes.all_nodes.push((*id, node.clone()));
+            self.nodes.depths.push(depth - top + new_top);
+            if let Some(bounds) = previous.node_bounds.get(id) {
+                self.node_bounds.insert(*id, *bounds);
+            }
+            if let Some(focus_id) = previous.focus_ids.get(id) {
+                self.focus_ids.insert(*id, *focus_id);
+            }
+            #[cfg(debug_assertions)]
+            if let Some(info) = previous.node_info.get(id) {
+                self.nodes.node_info.insert(*id, info.clone());
+            }
+            focus_reused |= previous.focus == Some(*id);
+            active_descendant_reused |= previous.active_descendant == Some(*id);
+        }
+        // The view had the focus, or the active descendant, and still does,
+        // because moving the focus draws every view again.
+        if focus_reused && self.nodes.focus.is_none() {
+            self.nodes.set_focus(previous.focus.unwrap());
+        }
+        if active_descendant_reused && self.nodes.active_descendant.is_none() {
+            self.nodes
+                .set_active_descendant(previous.active_descendant.unwrap());
+        }
+    }
+
+    /// Moves the listeners that the previous frame registered between the
+    /// positions `range` to this frame, for a cached view that is reused.
+    pub(crate) fn reuse_listeners(&mut self, range: Range<usize>) {
+        if !self.is_active() || range.is_empty() {
+            return;
+        }
+        let Some(listeners) = self.previous.action_listeners.get_mut(range.clone()) else {
+            log::error!(
+                "a11y: a reused view's listeners {range:?} are missing from the previous frame"
+            );
+            return;
+        };
+        // Slots are kept, even when empty, so that positions stay in step with
+        // the frame's own.
+        self.action_listeners
+            .extend(listeners.iter_mut().map(|listener| A11yListener {
+                node_id: listener.node_id,
+                action: listener.action,
+                listener: listener.listener.take(),
+            }));
+    }
+
+    /// Takes out the listeners registered for `action` on `node_id`, with the
+    /// positions to put them back at.
+    pub(crate) fn take_action_listeners(
+        &mut self,
+        node_id: NodeId,
+        action: Action,
+    ) -> Vec<(usize, A11yActionListener)> {
+        self.action_listeners
+            .iter_mut()
+            .enumerate()
+            .filter(|(_, entry)| entry.node_id == node_id && entry.action == action)
+            .filter_map(|(ix, entry)| Some((ix, entry.listener.take()?)))
+            .collect()
+    }
+
+    /// Puts back listeners taken out by [`Self::take_action_listeners`].
+    pub(crate) fn restore_action_listeners(&mut self, listeners: Vec<(usize, A11yActionListener)>) {
+        for (ix, listener) in listeners {
+            if let Some(entry) = self.action_listeners.get_mut(ix) {
+                entry.listener = Some(listener);
+            }
+        }
     }
 
     /// Finalize the tree and produce a [`TreeUpdate`] for the platform adapter.
@@ -296,6 +497,19 @@ impl A11y {
 
     pub(crate) fn debug_tree_json(&self) -> Option<String> {
         self.debug.to_json()
+    }
+
+    /// Reports accessibility as requested by the system, as the platform's
+    /// activation callback does.
+    #[cfg(test)]
+    pub(crate) fn activate_for_test(&self) {
+        self.active_flag.store(true, Ordering::SeqCst);
+    }
+
+    /// The tree the last frame sent to the platform adapter.
+    #[cfg(test)]
+    pub(crate) fn last_tree_for_test(&self) -> Option<&TreeUpdate> {
+        self.debug.last_tree_update()
     }
 }
 
@@ -374,6 +588,9 @@ pub(crate) struct A11yNodeBuilder {
     /// This is the exact type required by accesskit, so we can't just make it a
     /// `HashMap<NodeId, Node>` to remove the need for `seen_ids`
     all_nodes: Vec<(NodeId, accesskit::Node)>,
+    /// How many nodes sit above each of `all_nodes` in the tree, the window's
+    /// node being the top.
+    depths: Vec<usize>,
     seen_ids: FxHashSet<NodeId>,
     /// The node that GPUI considers focused. Note that this may be different to
     /// what is reported to accesskit - see [`Self::active_descendant`]
@@ -393,6 +610,7 @@ impl A11yNodeBuilder {
             ids_stack: SmallVec::new(),
             nodes_stack: SmallVec::new(),
             all_nodes: Vec::new(),
+            depths: Vec::new(),
             seen_ids: FxHashSet::default(),
             focus: None,
             active_descendant: None,
@@ -452,6 +670,7 @@ impl A11yNodeBuilder {
         if let Some(parent) = self.nodes_stack.last_mut() {
             parent.push_child(id);
         }
+        self.depths.push(self.ids_stack.len());
         self.all_nodes.push((id, node));
         true
     }
@@ -466,6 +685,7 @@ impl A11yNodeBuilder {
         debug_assert!(self.ids_stack.len() > 1, "pop would remove the root node");
 
         if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
+            self.depths.push(self.ids_stack.len());
             self.all_nodes.push((id, node));
         }
     }
@@ -473,6 +693,7 @@ impl A11yNodeBuilder {
     /// Push the root node to start a new frame.
     fn begin_frame(&mut self, window_title: Option<&SharedString>) {
         self.all_nodes.clear();
+        self.depths.clear();
         self.ids_stack.clear();
         self.nodes_stack.clear();
         self.seen_ids.clear();
@@ -557,6 +778,7 @@ impl A11yNodeBuilder {
         // Pop remaining nodes (should just be the root).
         while !self.ids_stack.is_empty() {
             if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {
+                self.depths.push(self.ids_stack.len());
                 self.all_nodes.push((id, node));
             }
         }
@@ -575,7 +797,8 @@ impl A11yNodeBuilder {
             _ => self.focus.unwrap_or(ROOT_NODE_ID),
         };
 
-        let nodes = std::mem::take(&mut self.all_nodes);
+        // The nodes stay for the cached views that the next frame reuses.
+        let nodes = self.all_nodes.clone();
         let update = TreeUpdate {
             nodes,
             tree: Some(accesskit::Tree::new(ROOT_NODE_ID)),
@@ -654,7 +877,7 @@ mod tests {
 
     fn new_a11y() -> A11y {
         let mut a11y = A11y::new(Arc::new(AtomicBool::new(true)), false, None);
-        a11y.begin_frame();
+        a11y.begin_frame(1);
         a11y
     }
 
@@ -877,6 +1100,65 @@ mod tests {
         a11y.nodes.pop(); // second
 
         a11y.nodes.pop(); // container
+    }
+
+    /// The ids of a node's children, in order.
+    fn children_of(update: &accesskit::TreeUpdate, id: NodeId) -> Vec<NodeId> {
+        let (_, node) = update
+            .nodes
+            .iter()
+            .find(|(node_id, _)| *node_id == id)
+            .unwrap();
+        node.children().to_vec()
+    }
+
+    // A view's nodes are copied under whichever node is being built when the
+    // view is reused, and a copy can be reused in turn.
+    #[test]
+    fn reused_nodes_land_under_the_node_being_built() {
+        let mut a11y = new_a11y();
+        a11y.sync_active_flag();
+        let (outer, view, child, leaf, sibling) =
+            (NodeId(1), NodeId(2), NodeId(3), NodeId(4), NodeId(5));
+
+        // Frame 1 draws a view with a child and a leaf directly under the
+        // window, and a sibling of the view.
+        a11y.begin_frame(1);
+        let start = a11y.node_index();
+        assert!(a11y.nodes.push(view, test_node()));
+        assert!(a11y.nodes.push(child, test_node()));
+        a11y.nodes.pop();
+        assert!(a11y.nodes.push_leaf(leaf, test_node()));
+        a11y.nodes.pop();
+        let range = start..a11y.node_index();
+        assert!(a11y.nodes.push_leaf(sibling, test_node()));
+        a11y.end_frame(Default::default());
+
+        // Frame 2 reuses it one level deeper, under another node.
+        a11y.begin_frame(2);
+        assert!(a11y.can_reuse_views(2));
+        assert!(a11y.nodes.push(outer, test_node()));
+        let start = a11y.node_index();
+        a11y.reuse_nodes(range);
+        let range = start..a11y.node_index();
+        a11y.nodes.pop();
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(children_of(&update, ROOT_NODE_ID), [outer]);
+        assert_eq!(children_of(&update, outer), [view]);
+        assert_eq!(children_of(&update, view), [child, leaf]);
+        let ids: Vec<_> = update.nodes.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, [child, leaf, view, outer, ROOT_NODE_ID]);
+
+        // Frame 3 reuses the copy at the top, and nothing outside the range.
+        a11y.begin_frame(3);
+        a11y.reuse_nodes(range);
+        let update = a11y.end_frame(Default::default());
+        assert_eq!(children_of(&update, ROOT_NODE_ID), [view]);
+        assert_eq!(children_of(&update, view), [child, leaf]);
+        assert!(!update.nodes.iter().any(|(id, _)| *id == outer));
+
+        // A frame that skipped building the tree has nothing to reuse.
+        assert!(!a11y.can_reuse_views(5));
     }
 
     // Node A is focused; node C (a child of the unfocused node B) claims the

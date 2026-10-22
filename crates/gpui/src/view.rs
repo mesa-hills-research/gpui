@@ -533,6 +533,7 @@ fn prepaint_view(
                     && element_state.paint_frame + 1 == frame_number
                     && !window.dirty_views.contains(&entity_id)
                     && !window.refreshing
+                    && window.a11y.can_reuse_views(frame_number)
                 {
                     let prepaint_start = window.prepaint_index();
                     window.reuse_prepaint(element_state.prepaint_range.clone());
@@ -642,9 +643,10 @@ fn paint_component(
 #[cfg(test)]
 mod tests {
     use crate::{
-        AnyWindowHandle, App, Background, Bounds, ContentMask, Context, Entity, Hsla, Modifiers,
-        Pixels, ScaledPixels, StyleRefinement, TestAppContext, VisualTestContext, Window,
-        WindowHandle, blue, deferred, div, green, hsla, point, prelude::*, px, red, size,
+        AnyWindowHandle, App, Background, Bounds, ContentMask, Context, Entity, FocusHandle, Hsla,
+        Modifiers, Pixels, Role, ScaledPixels, StyleRefinement, TestAppContext, VisualTestContext,
+        Window, WindowHandle, accesskit, blue, deferred, div, green, hsla, point, prelude::*, px,
+        red, size,
     };
     use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
     use std::{cell::Cell, rc::Rc};
@@ -951,6 +953,297 @@ mod tests {
         fixture.click_each_group(cx);
     }
 
+    /// A cached list of accessible items. The first reacts to clicks, the
+    /// second to the screen reader's click action, and the third can be
+    /// focused.
+    struct Panel {
+        focus: FocusHandle,
+        renders: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+        actions: Rc<Cell<usize>>,
+    }
+
+    impl Render for Panel {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            let clicks = self.clicks.clone();
+            let actions = self.actions.clone();
+            div()
+                .id("panel")
+                .role(Role::List)
+                .aria_label("panel")
+                .flex()
+                .flex_col()
+                .size_full()
+                .child(
+                    div()
+                        .id("click")
+                        .role(Role::ListItem)
+                        .aria_label("click")
+                        .h(px(20.))
+                        .w_full()
+                        .on_click(move |_, _, _| clicks.set(clicks.get() + 1)),
+                )
+                .child(
+                    div()
+                        .id("action")
+                        .role(Role::ListItem)
+                        .aria_label("action")
+                        .h(px(20.))
+                        .w_full()
+                        .on_a11y_action(accesskit::Action::Click, move |_, _, _| {
+                            actions.set(actions.get() + 1)
+                        }),
+                )
+                .child(
+                    div()
+                        .id("focus")
+                        .role(Role::ListItem)
+                        .aria_label("focus")
+                        .track_focus(&self.focus)
+                        .h(px(20.))
+                        .w_full()
+                        .child(div().id("inner").role(Role::Label).aria_label("inner")),
+                )
+        }
+    }
+
+    /// The window's root, which can redraw without its panel.
+    struct Shell {
+        panel: Entity<Panel>,
+        leading: usize,
+    }
+
+    impl Render for Shell {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("shell")
+                .role(Role::Group)
+                .size_full()
+                .children((0..self.leading).map(|ix| {
+                    div()
+                        .id(("leading", ix))
+                        .role(Role::Label)
+                        .aria_label("leading")
+                        .absolute()
+                        .size(px(1.))
+                }))
+                .child(
+                    self.panel
+                        .clone()
+                        .cached(StyleRefinement::default().size_full()),
+                )
+        }
+    }
+
+    struct PanelFixture {
+        window: WindowHandle<Shell>,
+        panel: Entity<Panel>,
+        focus: FocusHandle,
+        renders: Rc<Cell<usize>>,
+        clicks: Rc<Cell<usize>>,
+        actions: Rc<Cell<usize>>,
+    }
+
+    impl PanelFixture {
+        /// Opens the window and draws it once, with accessibility active
+        /// unless `active` is false.
+        fn open(cx: &mut TestAppContext, active: bool) -> Self {
+            let renders = Rc::new(Cell::new(0));
+            let clicks = Rc::new(Cell::new(0));
+            let actions = Rc::new(Cell::new(0));
+            let window = cx.open_window(size(px(200.), px(200.)), |_, cx| {
+                let panel = cx.new(|cx| Panel {
+                    focus: cx.focus_handle(),
+                    renders: renders.clone(),
+                    clicks: clicks.clone(),
+                    actions: actions.clone(),
+                });
+                Shell { panel, leading: 0 }
+            });
+            cx.run_until_parked();
+            let panel = window
+                .update(cx, |shell, _, _| shell.panel.clone())
+                .unwrap();
+            let focus = panel.read_with(cx, |panel, _| panel.focus.clone());
+            if active {
+                activate_a11y(window.into(), cx);
+            }
+            Self {
+                window,
+                panel,
+                focus,
+                renders,
+                clicks,
+                actions,
+            }
+        }
+
+        fn tree(&self, cx: &mut TestAppContext) -> accesskit::TreeUpdate {
+            a11y_tree(self.window.into(), cx)
+        }
+
+        /// How many labels the shell has drawn ahead of the panel.
+        fn leading(&self, cx: &mut TestAppContext) -> usize {
+            self.window.update(cx, |shell, _, _| shell.leading).unwrap()
+        }
+
+        /// Draws the shell again, which reuses the panel.
+        fn notify_shell(&self, cx: &mut TestAppContext) {
+            self.window
+                .update(cx, |shell, _, cx| {
+                    shell.leading += 1;
+                    cx.notify();
+                })
+                .unwrap();
+            cx.run_until_parked();
+        }
+
+        /// Sends the screen reader's request for `action` on the node
+        /// labelled `label`.
+        fn request(&self, cx: &mut TestAppContext, label: &str, action: accesskit::Action) {
+            let tree = self.tree(cx);
+            let (target_node, _) = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(label))
+                .unwrap_or_else(|| panic!("a node labelled {label}"));
+            let request = accesskit::ActionRequest {
+                action,
+                target_tree: accesskit::TreeId::ROOT,
+                target_node: *target_node,
+                data: None,
+            };
+            self.window
+                .update(cx, |_, window, cx| window.handle_a11y_action(request, cx))
+                .unwrap();
+            cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn a_reused_cached_view_keeps_its_accessibility_nodes(cx: &mut TestAppContext) {
+        let fixture = PanelFixture::open(cx, true);
+        let expected = a11y_shape(&fixture.tree(cx));
+        // The window, the shell, the panel, its three items and one label.
+        assert_eq!(expected.len(), 7, "{expected:#?}");
+        let renders = fixture.renders.get();
+
+        for _ in 0..3 {
+            fixture.notify_shell(cx);
+            assert_eq!(fixture.renders.get(), renders, "the panel is reused");
+            let shape = a11y_shape(&fixture.tree(cx));
+            // The shell gains one more label ahead of the panel each time.
+            assert_eq!(shape.len(), expected.len() + fixture.leading(cx));
+            let panel_nodes = |shape: &[A11yShape]| {
+                shape
+                    .iter()
+                    .skip_while(|node| node.label.as_deref() != Some("panel"))
+                    .map(|node| (node.depth, node.role, node.label.clone()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(panel_nodes(&shape), panel_nodes(&expected));
+        }
+
+        // The panel redrawn on its own while the shell is reused.
+        fixture.panel.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(fixture.renders.get(), renders + 1);
+        fixture.notify_shell(cx);
+        assert_eq!(fixture.renders.get(), renders + 1);
+        assert_eq!(
+            a11y_shape(&fixture.tree(cx)).len(),
+            expected.len() + fixture.leading(cx)
+        );
+    }
+
+    /// A fixture whose panel was reused by the last frame.
+    fn fixture_with_reused_panel(cx: &mut TestAppContext) -> PanelFixture {
+        let fixture = PanelFixture::open(cx, true);
+        let renders = fixture.renders.get();
+        fixture.notify_shell(cx);
+        fixture.notify_shell(cx);
+        assert_eq!(fixture.renders.get(), renders, "the panel is reused");
+        fixture
+    }
+
+    #[gpui::test]
+    fn an_action_handler_of_a_reused_view_still_runs(cx: &mut TestAppContext) {
+        let fixture = fixture_with_reused_panel(cx);
+        fixture.request(cx, "action", accesskit::Action::Click);
+        assert_eq!(fixture.actions.get(), 1);
+    }
+
+    #[gpui::test]
+    fn a_click_action_presses_a_node_of_a_reused_view(cx: &mut TestAppContext) {
+        let fixture = fixture_with_reused_panel(cx);
+        // Without a handler, the click goes where the node is.
+        fixture.request(cx, "click", accesskit::Action::Click);
+        assert_eq!(fixture.clicks.get(), 1);
+    }
+
+    #[gpui::test]
+    fn a_focus_action_focuses_a_node_of_a_reused_view(cx: &mut TestAppContext) {
+        let fixture = fixture_with_reused_panel(cx);
+        fixture.request(cx, "focus", accesskit::Action::Focus);
+        let focused = fixture
+            .window
+            .update(cx, |_, window, _| fixture.focus.is_focused(window))
+            .unwrap();
+        assert!(focused);
+    }
+
+    #[gpui::test]
+    fn the_focused_node_of_a_reused_view_stays_focused(cx: &mut TestAppContext) {
+        let fixture = PanelFixture::open(cx, true);
+        fixture
+            .window
+            .update(cx, |_, window, cx| window.focus(&fixture.focus, cx))
+            .unwrap();
+        cx.run_until_parked();
+        let focused_label = |fixture: &PanelFixture, cx: &mut TestAppContext| {
+            let tree = fixture.tree(cx);
+            tree.nodes
+                .iter()
+                .find(|(id, _)| *id == tree.focus)
+                .and_then(|(_, node)| node.label().map(str::to_string))
+        };
+        assert_eq!(focused_label(&fixture, cx).as_deref(), Some("focus"));
+
+        let renders = fixture.renders.get();
+        fixture.notify_shell(cx);
+        fixture.notify_shell(cx);
+        assert_eq!(fixture.renders.get(), renders, "the panel is reused");
+        assert_eq!(focused_label(&fixture, cx).as_deref(), Some("focus"));
+    }
+
+    #[gpui::test]
+    fn a_view_drawn_before_accessibility_started_is_drawn_again(cx: &mut TestAppContext) {
+        let fixture = PanelFixture::open(cx, false);
+        let renders = fixture.renders.get();
+
+        // Accessibility starts without a forced redraw, so the panel has no
+        // nodes to reuse and has to draw them.
+        fixture
+            .window
+            .update(cx, |_, window, _| window.a11y.activate_for_test())
+            .unwrap();
+        fixture.notify_shell(cx);
+        assert_eq!(fixture.renders.get(), renders + 1);
+        let shape = a11y_shape(&fixture.tree(cx));
+        assert!(
+            shape
+                .iter()
+                .any(|node| node.label.as_deref() == Some("panel"))
+        );
+        assert_eq!(shape.len(), 8);
+
+        // From then on it's reused.
+        fixture.notify_shell(cx);
+        assert_eq!(fixture.renders.get(), renders + 1);
+        assert_eq!(a11y_shape(&fixture.tree(cx)).len(), 9);
+    }
+
     /// A view in a randomly built tree of cached views.
     struct Node {
         color: Hsla,
@@ -968,6 +1261,8 @@ mod tests {
         fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
             div()
                 .id("node")
+                .role(Role::Group)
+                .aria_label(format!("{:.4}", self.color.h))
                 .flex()
                 .flex_col()
                 .size_full()
@@ -978,6 +1273,8 @@ mod tests {
                     this.child(deferred(
                         div()
                             .id("popover")
+                            .role(Role::Dialog)
+                            .aria_label("popover")
                             .size(px(6.))
                             .bg(self.color.opacity(0.5))
                             .on_click(|_, _, _| {}),
@@ -1052,6 +1349,65 @@ mod tests {
         }
     }
 
+    /// A node of the accessibility tree without its id, which differs from one
+    /// window to the next.
+    #[derive(Debug, PartialEq)]
+    struct A11yShape {
+        depth: usize,
+        role: Role,
+        label: Option<String>,
+        bounds: Option<accesskit::Rect>,
+    }
+
+    /// The nodes of a tree update below the root, in tree order.
+    fn a11y_shape(update: &accesskit::TreeUpdate) -> Vec<A11yShape> {
+        fn visit(
+            update: &accesskit::TreeUpdate,
+            id: accesskit::NodeId,
+            depth: usize,
+            shape: &mut Vec<A11yShape>,
+        ) {
+            let (_, node) = update
+                .nodes
+                .iter()
+                .find(|(node_id, _)| *node_id == id)
+                .expect("a child is in the update");
+            shape.push(A11yShape {
+                depth,
+                role: node.role(),
+                label: node.label().map(str::to_string),
+                bounds: node.bounds(),
+            });
+            for child in node.children() {
+                visit(update, *child, depth + 1, shape);
+            }
+        }
+        let root = update.tree.as_ref().expect("a full tree").root;
+        let mut shape = Vec::new();
+        visit(update, root, 0, &mut shape);
+        shape
+    }
+
+    /// Reports accessibility as active, as a screen reader does, and draws the
+    /// window again.
+    fn activate_a11y(window: AnyWindowHandle, cx: &mut TestAppContext) {
+        cx.update_window(window, |_, window, _| {
+            window.a11y.activate_for_test();
+            window.refresh();
+        })
+        .unwrap();
+        cx.run_until_parked();
+    }
+
+    /// The accessibility tree that the last frame sent to the platform.
+    fn a11y_tree(window: AnyWindowHandle, cx: &mut TestAppContext) -> accesskit::TreeUpdate {
+        cx.update_window(window, |_, window, _| {
+            window.a11y.last_tree_for_test().cloned()
+        })
+        .unwrap()
+        .expect("accessibility is active")
+    }
+
     #[derive(Debug, PartialEq)]
     struct DrawnFrame {
         quads: Vec<(
@@ -1061,6 +1417,7 @@ mod tests {
             Background,
         )>,
         hitboxes: Vec<Bounds<Pixels>>,
+        a11y: Vec<A11yShape>,
     }
 
     fn drawn_frame(window: AnyWindowHandle, cx: &mut TestAppContext) -> DrawnFrame {
@@ -1074,6 +1431,11 @@ mod tests {
                     .map(|quad| (quad.order, quad.bounds, quad.content_mask, quad.background))
                     .collect(),
                 hitboxes: frame.hitboxes.iter().map(|hitbox| hitbox.bounds).collect(),
+                a11y: window
+                    .a11y
+                    .last_tree_for_test()
+                    .map(a11y_shape)
+                    .unwrap_or_default(),
             }
         })
         .unwrap()
@@ -1121,6 +1483,7 @@ mod tests {
                 node: root.clone(),
             });
             cx.run_until_parked();
+            activate_a11y(window.into(), cx);
 
             for step in 0..40 {
                 let changes = rng.random_range(1..=2);
@@ -1162,6 +1525,7 @@ mod tests {
                     node: snapshot.build(cx),
                 });
                 cx.run_until_parked();
+                activate_a11y(fresh.into(), cx);
                 let expected = drawn_frame(fresh.into(), cx);
                 fresh
                     .update(cx, |_, window, _| window.remove_window())

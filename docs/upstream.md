@@ -209,6 +209,16 @@ adds the same line.
   other platform text systems search `all_font_names` by default. `mhr-gpui-apple`'s copy of
   `platform.rs` under `vendor/gpui` follows the original.
   `crates/gpui_screenshot/tests/font_families.rs` covers it on Linux.
+- **Accessibility nodes of reused cached views**, in `mhr-gpui`'s `src/window.rs`, `src/view.rs`
+  and `src/window/a11y.rs`. A cached view that was reused pushed no nodes, so the tree sent to the
+  screen reader lacked everything in it, for top-level and nested cached views alike. The builder
+  now keeps the previous frame's nodes with their depths, and `Window::prepaint_index` and
+  `Window::paint_index` record where a view's nodes and action listeners sit in them. Reusing a
+  view copies its range into the new frame under the node being built, with the bounds, focus
+  handles, focus and active descendant that belong to it, and moves its listeners over like
+  mouse listeners. A cached view isn't reused while the previous frame has no nodes, which is
+  the first frame after accessibility starts. `mhr-gpui-apple`'s copy of `window.rs` under
+  `vendor/gpui` follows it.
 
 ## The mobile crate
 

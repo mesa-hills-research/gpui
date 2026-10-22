@@ -5,6 +5,16 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## Unreleased
+
+### Views
+
+- A cached view that is reused keeps its nodes in the accessibility tree. Every frame that
+  reused one used to leave out its nodes, its focus and its action handlers, so a screen reader
+  found holes where cached views were. The nodes are now copied from the previous frame along
+  with the view's drawing. A cached view draws again when accessibility starts, to have nodes to
+  copy afterwards.
+
 ## 0.1.1
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,

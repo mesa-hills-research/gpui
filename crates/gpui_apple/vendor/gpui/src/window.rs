@@ -1018,6 +1018,7 @@ pub(crate) struct PrepaintStateIndex {
     deferred_draws_index: usize,
     dispatch_tree_index: usize,
     accessed_element_states_index: usize,
+    a11y_nodes_index: usize,
     line_layout_index: LineLayoutIndex,
 }
 
@@ -1030,6 +1031,7 @@ pub(crate) struct PaintIndex {
     input_handlers_index: usize,
     cursor_styles_index: usize,
     accessed_element_states_index: usize,
+    a11y_listeners_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
 }
@@ -1070,6 +1072,11 @@ impl PrepaintStateIndex {
                 from.accessed_element_states_index,
                 to.accessed_element_states_index,
             ),
+            a11y_nodes_index: rebase_index(
+                self.a11y_nodes_index,
+                from.a11y_nodes_index,
+                to.a11y_nodes_index,
+            ),
             line_layout_index: self
                 .line_layout_index
                 .rebased(&from.line_layout_index, &to.line_layout_index),
@@ -1108,6 +1115,11 @@ impl PaintIndex {
                 self.accessed_element_states_index,
                 from.accessed_element_states_index,
                 to.accessed_element_states_index,
+            ),
+            a11y_listeners_index: rebase_index(
+                self.a11y_listeners_index,
+                from.a11y_listeners_index,
+                to.a11y_listeners_index,
             ),
             tab_handle_index: rebase_index(
                 self.tab_handle_index,
@@ -3675,7 +3687,7 @@ impl Window {
 
         self.a11y.sync_active_flag();
         if self.a11y.is_active() {
-            self.a11y.begin_frame();
+            self.a11y.begin_frame(self.frame_number);
         }
 
         let _inspector_width: Pixels = rems(30.0).to_pixels(self.rem_size());
@@ -3978,6 +3990,7 @@ impl Window {
             deferred_draws_index: self.next_frame.deferred_draws.len(),
             dispatch_tree_index: self.next_frame.dispatch_tree.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            a11y_nodes_index: self.a11y.node_index(),
             line_layout_index: self.text_system.layout_index(),
         }
     }
@@ -4004,6 +4017,8 @@ impl Window {
         );
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
+        self.a11y
+            .reuse_nodes(range.start.a11y_nodes_index..range.end.a11y_nodes_index);
 
         let reused_subtree = self.next_frame.dispatch_tree.reuse_subtree(
             range.start.dispatch_tree_index..range.end.dispatch_tree_index,
@@ -4052,6 +4067,7 @@ impl Window {
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
             accessed_element_states_index: self.next_frame.accessed_element_states.len(),
+            a11y_listeners_index: self.a11y.listener_index(),
             tab_handle_index: self.next_frame.tab_stops.paint_index(),
             line_layout_index: self.text_system.layout_index(),
         }
@@ -4096,6 +4112,8 @@ impl Window {
             &self.rendered_frame.tab_stops.insertion_history
                 [range.start.tab_handle_index..range.end.tab_handle_index],
         );
+        self.a11y
+            .reuse_listeners(range.start.a11y_listeners_index..range.end.a11y_listeners_index);
 
         self.text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -7027,31 +7045,23 @@ impl Window {
         listener: impl FnMut(Option<&accesskit::ActionData>, &mut Window, &mut App) + 'static,
     ) {
         self.a11y
-            .action_listeners
-            .entry(node_id)
-            .or_default()
-            .push((action, Box::new(listener)));
+            .push_action_listener(node_id, action, Box::new(listener));
     }
 
     #[cfg(not(target_family = "wasm"))]
     pub(crate) fn handle_a11y_action(&mut self, request: accesskit::ActionRequest, cx: &mut App) {
         // Take listeners out temporarily so the closures can borrow Window
         // mutably, then restore them afterward.
-        if let Some(mut listeners) = self.a11y.action_listeners.remove(&request.target_node) {
+        let mut listeners = self
+            .a11y
+            .take_action_listeners(request.target_node, request.action);
+        if !listeners.is_empty() {
             let extra_data = request.data.as_ref();
-            let mut matched = false;
-            for (action, listener) in &mut listeners {
-                if *action == request.action {
-                    listener(extra_data, self, cx);
-                    matched = true;
-                }
+            for (_, listener) in &mut listeners {
+                listener(extra_data, self, cx);
             }
-            self.a11y
-                .action_listeners
-                .insert(request.target_node, listeners);
-            if matched {
-                return;
-            }
+            self.a11y.restore_action_listeners(listeners);
+            return;
         }
 
         // Fall back to built-in action handling.
