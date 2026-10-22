@@ -102,8 +102,10 @@ and the workspace sets `rust-version` and pins the crates to each other with `=`
 Each crate has its own version in its `Cargo.toml`, and the `=` pins in the workspace's
 `[workspace.dependencies]` follow them. A release gives a new version to every crate that changed
 since the last one and to every crate that pins one of those, and leaves the other crates alone.
-Version 0.1.1, for example, covers eight crates. `mhr-gpui` and four platform crates changed, and
-three more pin them. The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
+Version 0.1.1 covered eight crates, since `mhr-gpui` and four platform crates changed and three
+more pin them. Version 0.1.2 covers the same eight, since `mhr-gpui`, `mhr-gpui-apple` and
+`mhr-gpui-wgpu` changed and the other five pin `mhr-gpui`. The rest stay at 0.1.0, and the new
+versions pin them at `=0.1.0`.
 `git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
 the release by name, since cargo refuses a version that's already on crates.io:
 
@@ -260,7 +262,14 @@ adds the same line.
   Android, and the others shape whole lines as before. `mhr-gpui-apple`'s copy of `platform.rs`
   under `vendor/gpui` follows the original. `crates/gpui_screenshot/tests/segmented_shaping.rs`
   compares segmented and whole layouts of ASCII, accented, Greek, Cyrillic, emoji, CJK, right-to-left
-  and Indic text, and `long_line_measure.rs` there times a 2, 20 and 100 KB paragraph.
+  and Indic text, and `long_line_measure.rs` there times a 2, 20 and 100 KB paragraph. The glyphs
+  of the segments are the whole line's. A segment continues at the width the text system reports
+  for it, a sum over its words, where the whole line keeps adding glyph advances in a running
+  `f32`, so positions differ by float noise, up to about 0.16px at a cut in 2 KB of monospace text.
+  The whole line drifts from the exact sum by more than that over 90,000px, so the segments are the
+  closer. Wrapping follows the positions. Of 1,800 layouts of 300 random paragraphs of 1 to 10 KB at
+  six widths, 23 (1.3%) put one word on the other side of a line end than the whole line does, each
+  time a line end within a fraction of a pixel of the wrap width.
 
 ## The mobile crate
 

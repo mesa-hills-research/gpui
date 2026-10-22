@@ -5,7 +5,12 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
-## Unreleased
+## 0.1.2
+
+Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,
+`mhr-gpui-macos`, `mhr-gpui-apple`, `mhr-gpui-web` and `mhr-gpui-platform`. They pin each other
+exactly, so an app that uses several of them gets them all at 0.1.2. The other crates stay at
+0.1.0.
 
 ### Views
 
@@ -16,7 +21,8 @@ detail.
   reused one used to leave out its nodes, its focus and its action handlers, so a screen reader
   found holes where cached views were. The nodes are now copied from the previous frame along
   with the view's drawing. A cached view draws again when accessibility starts, to have nodes to
-  copy afterwards.
+  copy afterwards. While accessibility is on, the window keeps one more frame of nodes and copies
+  the tree once more in each frame. With accessibility off, a frame does no extra work.
 
 ### Animation
 
@@ -28,7 +34,9 @@ detail.
   effects applied. On a pane of 30, 120 and 480 rows, a frame in which a spinner turns took 0.26,
   0.32 and 0.65 ms, against 1.3, 4.2 and 17 ms when the spinner redraws the pane. Frames stop when
   the animations end or when `App::reduce_motion` is set, and `Animation::with_max_fps` draws
-  them on the grid that throttled animations share.
+  them on the grid that throttled animations share. A view that holds a paint animation no longer
+  draws in each frame, so code that counts that view's draws to measure the animation's frame rate
+  counts fewer.
 
 ### Lists
 
@@ -50,10 +58,14 @@ detail.
   segment it touches instead of the whole paragraph. On a paragraph of 20 KB, a frame that adds
   a word takes 1.2 ms instead of 9.6 ms, and one that edits a word in the middle takes 1.0 ms
   instead of 9.0 ms. At 100 KB they take 2.7 and 2.9 ms instead of 51 and 52 ms. A paragraph
-  drawn for the first time takes about 10% longer. Glyphs, line breaks and wrapping are those
-  of the whole line, and positions differ by no more than the rounding of the sums of the glyphs'
-  widths. Lines under 1 KB, lines with right-to-left text, tabs or control characters, and lines
-  on other platforms are shaped whole. A text system opts in with
+  drawn for the first time takes about 10% longer. The glyphs are those of the whole line.
+  Positions can differ from the whole line's by float noise, up to about 0.16px at a cut in a line
+  of monospace text, because each segment continues at the width the text system reports for it.
+  Wrapping follows the positions, so a word can land on the other side of a line end than it did in
+  0.1.1 when that line end sits within a fraction of a pixel of the wrap width. In a test of random
+  paragraphs of 1 to 10 KB at six widths, 1.3% of the wraps put one word on the other line. Lines
+  under 1 KB, lines with right-to-left text, tabs or control characters, and lines on other
+  platforms are shaped whole. A text system opts in with
   `PlatformTextSystem::shapes_words_independently`.
 
 ## 0.1.1
