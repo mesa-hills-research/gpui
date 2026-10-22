@@ -11,8 +11,8 @@
 use crate::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Edges, Element, EntityId,
     FocusHandle, GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement,
-    Overflow, Pixels, Point, ScrollDelta, ScrollWheelEvent, Size, Style, StyleRefinement, Styled,
-    Window, point, px, size,
+    Overflow, Pixels, Point, ScrollWheelEvent, Size, Style, StyleRefinement, Styled, Window, point,
+    px, size,
 };
 use collections::VecDeque;
 use refineable::Refineable as _;
@@ -2161,17 +2161,17 @@ impl Element for List {
         // div-based scroll containers.
         let list_state = self.state.clone();
         let height = bounds.size.height;
-        let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
-        let mut accumulated_scroll_delta = ScrollDelta::default();
         window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble && hitbox_id.should_handle_scroll(window) {
-                accumulated_scroll_delta = accumulated_scroll_delta.coalesce(event.delta);
-                let pixel_delta = accumulated_scroll_delta.pixel_delta(px(20.));
-                list_state.0.borrow_mut().scroll(
+                // From where the list is now, which is not where it was when
+                // it painted if something else scrolled it since.
+                let state = &mut *list_state.0.borrow_mut();
+                let scroll_top = state.logical_scroll_top();
+                state.scroll(
                     &scroll_top,
                     height,
-                    pixel_delta,
+                    event.delta.pixel_delta(px(20.)),
                     current_view,
                     window,
                     cx,
@@ -4346,5 +4346,43 @@ mod test {
                 }
             }
         }
+    }
+
+    #[gpui::test]
+    fn test_a_wheel_turn_scrolls_from_where_the_list_is(cx: &mut TestAppContext) {
+        let (cx, state, heights, view) = streaming_list(cx);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        let offset = |state: &ListState| {
+            let top = state.logical_scroll_top();
+            heights.borrow()[..top.item_ix].iter().sum::<f32>() + top.offset_in_item.0
+        };
+        let wheel = |cx: &mut gpui::VisualTestContext, dy: f32| {
+            cx.simulate_event(ScrollWheelEvent {
+                position: point(px(50.), px(150.)),
+                delta: ScrollDelta::Pixels(point(px(0.), px(dy))),
+                ..Default::default()
+            });
+        };
+        let end = offset(&state);
+        assert_eq!(end, 59. * 40. + 500. - 300.);
+
+        // Something else scrolls the list, and the wheel turns before the next
+        // frame. Both moves count.
+        state.scroll_by(px(-1000.));
+        wheel(cx, 60.);
+        assert_eq!(offset(&state), end - 1060.);
+        draw(cx);
+        assert_eq!(offset(&state), end - 1060.);
+
+        // Two turns before a frame count both.
+        wheel(cx, -30.);
+        wheel(cx, -30.);
+        assert_eq!(offset(&state), end - 1000.);
+        draw(cx);
+        assert_eq!(offset(&state), end - 1000.);
     }
 }

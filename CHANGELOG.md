@@ -21,6 +21,9 @@ detail.
   had distance left to the end went past 1, and the offset the scrollbar showed went past the end of
   its range. A wheel turn through `set_offset_from_scrollbar` then moved the list by the turn and
   by the excess as well.
+- A turn of the wheel scrolls the list from where it is. The list's wheel handler scrolled from
+  where the list was when it last painted, so a turn that came after another scroll in the same
+  frame, by `scroll_by`, by `scroll_to` or through the scrollbar's offset, undid that scroll.
 
 ## 0.1.2
 
