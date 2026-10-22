@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -79,6 +80,11 @@ impl Keystroke {
     ///
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
+    ///
+    /// Shift on a key that carries two symbols counts as the shifted symbol alone, since
+    /// platforms report it that way. A typed `ctrl-|` matches a binding written `ctrl-|` or
+    /// `ctrl-shift-\`, and a typed `ctrl-shift-\` (as a test types it) matches both too.
+    /// The symbols are those of a US keyboard.
     pub fn should_match(&self, target: &KeybindingKeystroke) -> bool {
         #[cfg(not(target_os = "windows"))]
         if let Some(key_char) = self
@@ -109,7 +115,32 @@ impl Keystroke {
             }
         }
 
-        target.inner.modifiers == self.modifiers && target.inner.key == self.key
+        if target.inner.modifiers == self.modifiers && target.inner.key == self.key {
+            return true;
+        }
+
+        (self.modifiers.shift || target.inner.modifiers.shift)
+            && self.without_shift_on_symbol() == target.inner.without_shift_on_symbol()
+    }
+
+    /// The modifiers and key of this keystroke with Shift folded into a symbol key.
+    ///
+    /// Ctrl+Shift+\ on a US keyboard arrives as `ctrl-|` from Windows, Linux and macOS, which
+    /// drop Shift and report the symbol typed, and as `ctrl-shift-|` from the web. A binding
+    /// written `ctrl-shift-\`, or a test that types it, has Shift and the other symbol of the
+    /// key. All of them fold to `ctrl-|`. Letters and named keys such as `tab` keep their Shift.
+    fn without_shift_on_symbol(&self) -> (Modifiers, &str) {
+        if self.modifiers.shift
+            && let Some(symbol) = shifted_symbol(&self.key)
+        {
+            let modifiers = Modifiers {
+                shift: false,
+                ..self.modifiers
+            };
+            (modifiers, symbol)
+        } else {
+            (self.modifiers, &self.key)
+        }
     }
 
     /// key syntax is:
@@ -261,6 +292,35 @@ impl Keystroke {
         }
         self
     }
+}
+
+/// The symbol Shift types on a key of a US keyboard that carries two, given either the key or
+/// the symbol. `\` and `|` both give `|`.
+fn shifted_symbol(key: &str) -> Option<&'static str> {
+    Some(match key {
+        "`" | "~" => "~",
+        "1" | "!" => "!",
+        "2" | "@" => "@",
+        "3" | "#" => "#",
+        "4" | "$" => "$",
+        "5" | "%" => "%",
+        "6" | "^" => "^",
+        "7" | "&" => "&",
+        "8" | "*" => "*",
+        "9" | "(" => "(",
+        "0" | ")" => ")",
+        "-" | "_" => "_",
+        "=" | "+" => "+",
+        "[" | "{" => "{",
+        "]" | "}" => "}",
+        "\\" | "|" => "|",
+        ";" | ":" => ":",
+        "'" | "\"" => "\"",
+        "," | "<" => "<",
+        "." | ">" => ">",
+        "/" | "?" => "?",
+        _ => return None,
+    })
 }
 
 impl KeybindingKeystroke {
@@ -779,4 +839,260 @@ fn unparse(modifiers: &Modifiers, key: &str) -> String {
     }
     result.push_str(&key);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each key of a US keyboard that carries two symbols, with the symbol Shift types on it.
+    const SHIFTED_SYMBOLS: [(&str, &str); 21] = [
+        ("`", "~"),
+        ("1", "!"),
+        ("2", "@"),
+        ("3", "#"),
+        ("4", "$"),
+        ("5", "%"),
+        ("6", "^"),
+        ("7", "&"),
+        ("8", "*"),
+        ("9", "("),
+        ("0", ")"),
+        ("-", "_"),
+        ("=", "+"),
+        ("[", "{"),
+        ("]", "}"),
+        ("\\", "|"),
+        (";", ":"),
+        ("'", "\""),
+        (",", "<"),
+        (".", ">"),
+        ("/", "?"),
+    ];
+
+    fn typed(modifiers: Modifiers, key: &str) -> Keystroke {
+        Keystroke {
+            modifiers,
+            key: key.into(),
+            key_char: None,
+        }
+    }
+
+    fn binding(modifiers: Modifiers, key: &str) -> KeybindingKeystroke {
+        KeybindingKeystroke::from_keystroke(typed(modifiers, key))
+    }
+
+    fn with_shift(modifiers: Modifiers) -> Modifiers {
+        Modifiers {
+            shift: true,
+            ..modifiers
+        }
+    }
+
+    /// Every combination of the modifiers other than Shift.
+    fn modifier_combinations() -> Vec<Modifiers> {
+        (0..16)
+            .map(|bits| Modifiers {
+                control: bits & 1 != 0,
+                alt: bits & 2 != 0,
+                platform: bits & 4 != 0,
+                function: bits & 8 != 0,
+                shift: false,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_shift_on_a_symbol_key_matches_the_symbol_alone() {
+        for (key, symbol) in SHIFTED_SYMBOLS {
+            let spelled_with_shift = binding(Modifiers::control_shift(), key);
+            let spelled_as_symbol = binding(Modifiers::control(), symbol);
+            for target in [&spelled_with_shift, &spelled_as_symbol] {
+                // What Windows, Linux and macOS send.
+                assert!(
+                    typed(Modifiers::control(), symbol).should_match(target),
+                    "ctrl-{symbol} against {target:?}"
+                );
+                // What the web sends.
+                assert!(
+                    typed(Modifiers::control_shift(), symbol).should_match(target),
+                    "ctrl-shift-{symbol} against {target:?}"
+                );
+                // What a test types.
+                assert!(
+                    typed(Modifiers::control_shift(), key).should_match(target),
+                    "ctrl-shift-{key} against {target:?}"
+                );
+                // The key without Shift is another chord.
+                assert!(
+                    !typed(Modifiers::control(), key).should_match(target),
+                    "ctrl-{key} against {target:?}"
+                );
+                assert!(!typed(Modifiers::none(), symbol).should_match(target));
+                assert!(!typed(Modifiers::shift(), symbol).should_match(target));
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_shifted_symbol_needs_the_symbol_of_its_key() {
+        for (key, symbol) in SHIFTED_SYMBOLS {
+            for (other_key, other_symbol) in SHIFTED_SYMBOLS {
+                if other_key == key {
+                    continue;
+                }
+                for target in [
+                    binding(Modifiers::control_shift(), key),
+                    binding(Modifiers::control(), symbol),
+                ] {
+                    assert!(!typed(Modifiers::control(), other_symbol).should_match(&target));
+                    assert!(!typed(Modifiers::control_shift(), other_key).should_match(&target));
+                    assert!(!typed(Modifiers::control(), other_key).should_match(&target));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_a_shifted_symbol_needs_the_other_modifiers_to_agree() {
+        for bound in modifier_combinations() {
+            let spelled_with_shift = binding(with_shift(bound), "\\");
+            let spelled_as_symbol = binding(bound, "|");
+            for sent in modifier_combinations() {
+                for target in [&spelled_with_shift, &spelled_as_symbol] {
+                    let expected = sent == bound;
+                    assert_eq!(
+                        typed(sent, "|").should_match(target),
+                        expected,
+                        "{sent:?} | against {target:?}"
+                    );
+                    assert_eq!(
+                        typed(with_shift(sent), "|").should_match(target),
+                        expected,
+                        "{sent:?} shift | against {target:?}"
+                    );
+                    assert_eq!(
+                        typed(with_shift(sent), "\\").should_match(target),
+                        expected,
+                        "{sent:?} shift \\ against {target:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_letters_named_keys_and_digits_keep_their_shift() {
+        let control_shift_p = binding(Modifiers::control_shift(), "p");
+        assert!(typed(Modifiers::control_shift(), "p").should_match(&control_shift_p));
+        assert!(!typed(Modifiers::control(), "p").should_match(&control_shift_p));
+        let control_p = binding(Modifiers::control(), "p");
+        assert!(!typed(Modifiers::control_shift(), "p").should_match(&control_p));
+
+        for key in [
+            "tab", "up", "left", "f3", "enter", "space", "home", "escape",
+        ] {
+            let shifted = binding(Modifiers::shift(), key);
+            let plain = binding(Modifiers::none(), key);
+            assert!(typed(Modifiers::shift(), key).should_match(&shifted));
+            assert!(!typed(Modifiers::none(), key).should_match(&shifted));
+            assert!(!typed(Modifiers::shift(), key).should_match(&plain));
+        }
+
+        // A layout that types digits with Shift sends the digit, so the digit alone is not
+        // the chord of `ctrl-shift-1`.
+        let shifted_digit = binding(Modifiers::control_shift(), "1");
+        assert!(!typed(Modifiers::control(), "1").should_match(&shifted_digit));
+        let plain_digit = binding(Modifiers::control(), "1");
+        assert!(!typed(Modifiers::control(), "!").should_match(&plain_digit));
+        assert!(!typed(Modifiers::control_shift(), "1").should_match(&plain_digit));
+    }
+
+    fn delivered(modifiers: Modifiers, key: &str, key_char: Option<&str>) -> Keystroke {
+        Keystroke {
+            modifiers,
+            key: key.into(),
+            key_char: key_char.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn test_what_linux_sends_for_a_us_keyboard_matches_the_binding_with_shift() {
+        // The keystrokes of Ctrl+Shift on the keys of libxkbcommon's US layout, with the
+        // character Linux sends along when the chord types one.
+        let sent_for_key = [
+            ("\\", "|", None),
+            ("1", "!", Some("!")),
+            ("2", "@", None),
+            ("0", ")", Some(")")),
+            ("-", "_", None),
+            ("=", "+", Some("+")),
+            ("/", "?", Some("?")),
+            ("[", "{", None),
+            ("]", "}", None),
+            ("`", "~", None),
+            (".", ">", Some(">")),
+            (",", "<", Some("<")),
+        ];
+        for (key, symbol, key_char) in sent_for_key {
+            let sent = delivered(Modifiers::control(), symbol, key_char);
+            assert!(sent.should_match(&binding(Modifiers::control_shift(), key)));
+            assert!(sent.should_match(&binding(Modifiers::control(), symbol)));
+            assert!(!sent.should_match(&binding(Modifiers::control(), key)));
+        }
+    }
+
+    #[test]
+    fn test_other_layouts_need_the_symbol_they_send() {
+        let control_shift = Modifiers::control_shift();
+        // Shift+2 of a UK keyboard sends `"`, and its key left of Z sends `|` as a US
+        // backslash key does.
+        let uk_shift_2 = delivered(Modifiers::control(), "\"", Some("\""));
+        assert!(!uk_shift_2.should_match(&binding(control_shift, "2")));
+        assert!(uk_shift_2.should_match(&binding(control_shift, "'")));
+        assert!(uk_shift_2.should_match(&binding(Modifiers::control(), "\"")));
+        let uk_backslash = delivered(Modifiers::control(), "|", None);
+        assert!(uk_backslash.should_match(&binding(control_shift, "\\")));
+        // A French keyboard sends the digit for Ctrl+Shift+1.
+        let french_shift_1 = delivered(Modifiers::control(), "1", Some("1"));
+        assert!(!french_shift_1.should_match(&binding(control_shift, "1")));
+        assert!(french_shift_1.should_match(&binding(Modifiers::control(), "1")));
+    }
+
+    #[test]
+    fn test_parse_keeps_shift_on_a_symbol_key() {
+        let parsed = Keystroke::parse("ctrl-shift-\\").unwrap();
+        assert_eq!(parsed.modifiers, Modifiers::control_shift());
+        assert_eq!(parsed.key, "\\");
+        assert_eq!(parsed.unparse(), "ctrl-shift-\\");
+
+        let parsed = Keystroke::parse("ctrl-|").unwrap();
+        assert_eq!(parsed.modifiers, Modifiers::control());
+        assert_eq!(parsed.key, "|");
+
+        let parsed = Keystroke::parse("ctrl-shift--").unwrap();
+        assert_eq!(parsed.modifiers, Modifiers::control_shift());
+        assert_eq!(parsed.key, "-");
+        assert!(
+            Keystroke::parse("ctrl-_")
+                .unwrap()
+                .should_match(&KeybindingKeystroke::from_keystroke(parsed))
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_a_binding_mapped_for_display_matches_the_symbol_alone() {
+        // What Windows' keyboard mapper makes of `ctrl-shift-\`.
+        let mapped = KeybindingKeystroke::new(
+            typed(Modifiers::control(), "|"),
+            Modifiers::control_shift(),
+            "\\".into(),
+        );
+        assert!(typed(Modifiers::control(), "|").should_match(&mapped));
+        assert!(typed(Modifiers::control_shift(), "\\").should_match(&mapped));
+        assert!(!typed(Modifiers::control(), "\\").should_match(&mapped));
+        assert_eq!(mapped.unparse(), "ctrl-shift-\\");
+        assert_eq!(mapped.to_string(), "ctrl-shift-\\");
+    }
 }

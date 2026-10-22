@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 //! KeyDispatch is where GPUI deals with binding actions to key events.
 //!
 //! The key pieces to making a key binding work are to define an action,
@@ -2192,5 +2193,146 @@ mod tests {
 
         cx.simulate_keystrokes("ctrl-b [");
         test.update(cx, |test, _| assert_eq!(test.text.borrow().as_str(), "["))
+    }
+
+    /// Dispatches a key press as a platform reports it.
+    fn send_key_down(cx: &mut VisualTestContext, modifiers: Modifiers, key: &str) {
+        let keystroke = Keystroke {
+            modifiers,
+            key: key.into(),
+            key_char: None,
+        };
+        cx.update(|window, cx| {
+            window.dispatch_event(
+                PlatformInput::KeyDown(KeyDownEvent {
+                    keystroke,
+                    is_held: false,
+                    prefer_character_input: false,
+                }),
+                cx,
+            )
+        });
+    }
+
+    #[crate::test]
+    fn test_shifted_symbol_binding_runs_for_the_keystrokes_of_every_platform(
+        cx: &mut TestAppContext,
+    ) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-shift-\\", TestAction, Some("Terminal")),
+                KeyBinding::new("cmd-shift-\\", SecondaryTestAction, Some("Terminal")),
+            ],
+        );
+
+        // Windows and Linux send Ctrl+Shift+\ as the symbol alone.
+        send_key_down(cx, Modifiers::control(), "|");
+        assert_eq!(action_count.get(), 1);
+        // macOS sends Cmd+Shift+\ the same way.
+        send_key_down(cx, Modifiers::command(), "|");
+        assert_eq!(secondary_action_count.get(), 1);
+        // The web keeps Shift on the symbol.
+        send_key_down(cx, Modifiers::control_shift(), "|");
+        assert_eq!(action_count.get(), 2);
+        // A test types the chord as it is written.
+        cx.simulate_keystrokes("ctrl-shift-\\");
+        assert_eq!(action_count.get(), 3);
+
+        // The key without Shift is another chord.
+        send_key_down(cx, Modifiers::control(), "\\");
+        send_key_down(cx, Modifiers::control(), "/");
+        send_key_down(cx, Modifiers::none(), "|");
+        assert_eq!(action_count.get(), 3);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_a_chord_spelled_two_ways_runs_one_action(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-|", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-shift-\\", TestAction, Some("Terminal")),
+            ],
+        );
+        send_key_down(cx, Modifiers::control(), "|");
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+    }
+
+    #[crate::test]
+    fn test_a_chord_spelled_two_ways_runs_the_binding_added_later(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-|", TestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-shift-\\", SecondaryTestAction, Some("Terminal")),
+            ],
+        );
+        send_key_down(cx, Modifiers::control(), "|");
+        assert_eq!(action_count.get(), 0);
+        assert_eq!(secondary_action_count.get(), 1);
+    }
+
+    #[crate::test]
+    fn test_a_pending_shifted_symbol_runs_the_shorter_binding_on_replay(cx: &mut TestAppContext) {
+        let (cx, action_count, secondary_action_count) = setup_pending_input_test(
+            cx,
+            [
+                KeyBinding::new("ctrl-shift-\\", SecondaryTestAction, Some("Terminal")),
+                KeyBinding::new("ctrl-shift-\\ x", TestAction, Some("Terminal")),
+            ],
+        );
+
+        send_key_down(cx, Modifiers::control(), "|");
+        cx.update(|window, _| {
+            assert_eq!(
+                window
+                    .pending_input()
+                    .map(|pending| pending.keystrokes().len()),
+                Some(1)
+            );
+        });
+        assert_eq!(secondary_action_count.get(), 0);
+
+        cx.simulate_keystrokes("x");
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 0);
+
+        // Left waiting, the pending symbol runs the shorter binding.
+        send_key_down(cx, Modifiers::control(), "|");
+        cx.executor().advance_clock(crate::PENDING_INPUT_TIMEOUT);
+        cx.run_until_parked();
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 1);
+
+        // So does a key that continues no binding.
+        send_key_down(cx, Modifiers::control(), "|");
+        cx.simulate_keystrokes("y");
+        cx.update(|window, _| assert!(!window.has_pending_keystrokes()));
+        assert_eq!(action_count.get(), 1);
+        assert_eq!(secondary_action_count.get(), 2);
+    }
+
+    #[test]
+    fn test_a_binding_hidden_by_another_spelling_of_its_chord_is_not_shown() {
+        for (first, second) in [("ctrl-|", "ctrl-shift-\\"), ("ctrl-shift-\\", "ctrl-|")] {
+            let tree = test_dispatch_tree(vec![
+                KeyBinding::new(first, TestAction, None),
+                KeyBinding::new(second, SecondaryTestAction, None),
+            ]);
+            assert!(
+                tree.highest_precedence_binding_for_action(&TestAction, &[])
+                    .is_none(),
+                "{first} before {second}"
+            );
+            let shown = tree
+                .highest_precedence_binding_for_action(&SecondaryTestAction, &[])
+                .expect("the later binding is shown");
+            assert_eq!(shown.keystrokes()[0].inner().unparse(), second);
+        }
     }
 }

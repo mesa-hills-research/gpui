@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 mod binding;
 mod context;
 
@@ -1114,6 +1115,247 @@ mod tests {
         ];
         let (dispatched, _) = keymap.bindings_for_input(&typed_then_a, &[]);
         assert!(dispatched.is_empty());
+    }
+
+    fn typed(source: &str) -> Keystroke {
+        Keystroke::parse(source).unwrap()
+    }
+
+    /// The bindings that run for the input, as `describe_bindings` shows them.
+    #[track_caller]
+    fn dispatched(
+        keymap: &Keymap,
+        input: &[&str],
+        contexts: &[&str],
+    ) -> Vec<(String, &'static str)> {
+        let input = input.iter().map(|source| typed(source)).collect::<Vec<_>>();
+        let contexts = contexts
+            .iter()
+            .map(|context| KeyContext::parse(context).unwrap())
+            .collect::<Vec<_>>();
+        let (bindings, pending) = keymap.bindings_for_input(&input, &contexts);
+        assert!(!pending, "{input:?} should not be pending");
+        describe_bindings(&bindings)
+    }
+
+    fn alpha(keystrokes: &str) -> (String, &'static str) {
+        (keystrokes.to_string(), "test_only::ActionAlpha")
+    }
+
+    fn beta(keystrokes: &str) -> (String, &'static str) {
+        (keystrokes.to_string(), "test_only::ActionBeta")
+    }
+
+    #[test]
+    fn test_shifted_symbol_bindings_match_what_the_platforms_send() {
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-shift-\\", ActionAlpha {}, None),
+            KeyBinding::new("ctrl-@", ActionBeta {}, None),
+            KeyBinding::new("ctrl-shift-p", ActionGamma {}, None),
+            KeyBinding::new("cmd-shift-\\", ActionDelta {}, None),
+        ]);
+        let gamma = ("ctrl-shift-p".to_string(), "test_only::ActionGamma");
+        let delta = (typed("cmd-shift-\\").unparse(), "test_only::ActionDelta");
+
+        // Ctrl+Shift+\ on Windows and Linux, and Ctrl+Shift+2, send the symbol without Shift.
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-|"], &[]),
+            vec![alpha("ctrl-shift-\\")]
+        );
+        assert_eq!(dispatched(&keymap, &["ctrl-@"], &[]), vec![beta("ctrl-@")]);
+        // Cmd+Shift+\ on macOS.
+        assert_eq!(dispatched(&keymap, &["cmd-|"], &[]), vec![delta]);
+        // The web sends Shift along with the symbol, and a test types the chord as written.
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-shift-|"], &[]),
+            vec![alpha("ctrl-shift-\\")]
+        );
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-shift-\\"], &[]),
+            vec![alpha("ctrl-shift-\\")]
+        );
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-shift-2"], &[]),
+            vec![beta("ctrl-@")]
+        );
+        // Letters keep their Shift.
+        assert_eq!(dispatched(&keymap, &["ctrl-P"], &[]), vec![gamma]);
+        assert!(dispatched(&keymap, &["ctrl-p"], &[]).is_empty());
+        // Other chords match nothing.
+        for input in [
+            "ctrl-\\",
+            "ctrl-2",
+            "alt-|",
+            "ctrl-alt-|",
+            "|",
+            "shift-|",
+            "ctrl-/",
+        ] {
+            assert!(dispatched(&keymap, &[input], &[]).is_empty(), "{input}");
+        }
+    }
+
+    #[test]
+    fn test_one_chord_spelled_two_ways_runs_the_later_binding_first() {
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-|", ActionAlpha {}, None),
+            KeyBinding::new("ctrl-shift-\\", ActionBeta {}, None),
+        ]);
+        for input in ["ctrl-|", "ctrl-shift-\\"] {
+            assert_eq!(
+                dispatched(&keymap, &[input], &[]),
+                vec![beta("ctrl-shift-\\"), alpha("ctrl-|")]
+            );
+        }
+        let all = keymap.all_bindings_for_input(&[typed("ctrl-|")]);
+        assert_eq!(
+            describe_bindings(&all),
+            vec![beta("ctrl-shift-\\"), alpha("ctrl-|")]
+        );
+
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-shift-\\", ActionBeta {}, None),
+            KeyBinding::new("ctrl-|", ActionAlpha {}, None),
+        ]);
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-|"], &[]),
+            vec![alpha("ctrl-|"), beta("ctrl-shift-\\")]
+        );
+    }
+
+    #[test]
+    fn test_shifted_symbol_bindings_follow_their_context() {
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-|", ActionAlpha {}, Some("workspace")),
+            KeyBinding::new(
+                "ctrl-shift-\\",
+                ActionBeta {},
+                Some("editor && mode == full"),
+            ),
+        ]);
+        let both = vec![beta("ctrl-shift-\\"), alpha("ctrl-|")];
+
+        assert!(dispatched(&keymap, &["ctrl-|"], &["pane"]).is_empty());
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-|"], &["workspace"]),
+            vec![alpha("ctrl-|")]
+        );
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-|"], &["workspace", "editor"]),
+            vec![alpha("ctrl-|")]
+        );
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-|"], &["workspace", "editor mode=full"]),
+            both
+        );
+        assert_eq!(
+            dispatched(
+                &keymap,
+                &["ctrl-shift-|"],
+                &["workspace", "editor mode=full"]
+            ),
+            both
+        );
+    }
+
+    #[test]
+    fn test_a_shifted_symbol_can_be_disabled_by_either_spelling() {
+        for (bound, disabled) in [("ctrl-shift-\\", "ctrl-|"), ("ctrl-|", "ctrl-shift-\\")] {
+            let keymap = Keymap::new(vec![
+                KeyBinding::new(bound, ActionAlpha {}, None),
+                KeyBinding::new(disabled, NoAction {}, None),
+            ]);
+            assert!(dispatched(&keymap, &["ctrl-|"], &[]).is_empty());
+        }
+    }
+
+    #[test]
+    fn test_unbind_removes_a_binding_spelled_the_same() {
+        // Unbind compares the keystrokes as written, unlike matching a keystroke.
+        for (bound, unbound, removed) in [
+            ("ctrl-shift-\\", "ctrl-shift-\\", true),
+            ("ctrl-|", "ctrl-|", true),
+            ("ctrl-shift-\\", "ctrl-|", false),
+            ("ctrl-|", "ctrl-shift-\\", false),
+        ] {
+            let keymap = Keymap::new(vec![
+                KeyBinding::new(bound, ActionAlpha {}, None),
+                KeyBinding::new(unbound, Unbind("test_only::ActionAlpha".into()), None),
+            ]);
+            assert_eq!(
+                dispatched(&keymap, &["ctrl-|"], &[]).is_empty(),
+                removed,
+                "{bound} unbound by {unbound}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_shifted_symbols_in_a_sequence_of_keystrokes() {
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-k ctrl-shift-\\", ActionAlpha {}, None),
+            KeyBinding::new("ctrl-k x", ActionBeta {}, None),
+            KeyBinding::new("ctrl-shift-1 a", ActionGamma {}, None),
+        ]);
+
+        let (bindings, pending) = keymap.bindings_for_input(&[typed("ctrl-k")], &[]);
+        assert!(bindings.is_empty());
+        assert!(pending);
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-k", "ctrl-|"], &[]),
+            vec![alpha("ctrl-k ctrl-shift-\\")]
+        );
+        assert!(dispatched(&keymap, &["ctrl-k", "ctrl-\\"], &[]).is_empty());
+
+        // The first keystroke of a sequence is the symbol a platform sends.
+        let (bindings, pending) = keymap.bindings_for_input(&[typed("ctrl-!")], &[]);
+        assert!(bindings.is_empty());
+        assert!(pending);
+        assert_eq!(
+            dispatched(&keymap, &["ctrl-!", "a"], &[]),
+            vec![("ctrl-shift-1 a".to_string(), "test_only::ActionGamma")]
+        );
+        assert!(dispatched(&keymap, &["ctrl-!", "b"], &[]).is_empty());
+
+        let next = keymap.possible_next_bindings_for_input(&[typed("ctrl-k")], &[]);
+        assert_eq!(
+            describe_bindings(&next),
+            vec![beta("ctrl-k x"), alpha("ctrl-k ctrl-shift-\\")]
+        );
+        let next = keymap.possible_next_bindings_for_input(&[typed("ctrl-!")], &[]);
+        assert_eq!(
+            describe_bindings(&next),
+            vec![("ctrl-shift-1 a".to_string(), "test_only::ActionGamma")]
+        );
+
+        let binding = keymap.bindings().next().unwrap();
+        assert_eq!(binding.match_keystrokes(&[typed("ctrl-k")]), Some(true));
+        assert_eq!(
+            binding.match_keystrokes(&[typed("ctrl-k"), typed("ctrl-|")]),
+            Some(false)
+        );
+        assert_eq!(
+            binding.match_keystrokes(&[typed("ctrl-k"), typed("ctrl-/")]),
+            None
+        );
+    }
+
+    #[test]
+    fn test_a_shifted_symbol_binding_keeps_its_spelling() {
+        let keymap = Keymap::new(vec![
+            KeyBinding::new("ctrl-shift-\\", ActionAlpha {}, None),
+            KeyBinding::new("ctrl-@", ActionBeta {}, None),
+        ]);
+        for (action, expected) in [
+            (&ActionAlpha {} as &dyn Action, "ctrl-shift-\\"),
+            (&ActionBeta {}, "ctrl-@"),
+        ] {
+            let spelled = keymap
+                .bindings_for_action(action)
+                .map(|binding| binding.keystrokes[0].inner().unparse())
+                .collect::<Vec<_>>();
+            assert_eq!(spelled, [expected]);
+        }
     }
 
     fn describe_bindings(bindings: &[KeyBinding]) -> Vec<(String, &'static str)> {
