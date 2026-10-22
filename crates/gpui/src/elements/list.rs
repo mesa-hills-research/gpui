@@ -340,6 +340,10 @@ pub struct ListPrepaintState {
 enum ListItem {
     Unmeasured {
         size_hint: Option<Size<Pixels>>,
+        /// Whether the hint is the height the item had before it changed, and
+        /// the list has to estimate it again, as a list given estimates does
+        /// in its next frame.
+        stale: bool,
         focus_handle: Option<FocusHandle>,
     },
     Measured {
@@ -362,6 +366,10 @@ impl ListItem {
             ListItem::Measured { size, .. } => Some(*size),
             ListItem::Unmeasured { size_hint, .. } => *size_hint,
         }
+    }
+
+    fn stale(&self) -> bool {
+        matches!(self, ListItem::Unmeasured { stale: true, .. })
     }
 
     fn focus_handle(&self) -> Option<FocusHandle> {
@@ -392,6 +400,8 @@ struct ListItemSummary {
     has_focus_handles: bool,
     /// Items neither measured nor given a size hint, which count no height.
     unknown_count: usize,
+    /// Items whose size hint is the height they had before they changed.
+    stale_count: usize,
 }
 
 impl ListItemSummary {
@@ -511,6 +521,7 @@ impl ListState {
             .iter()
             .map(|item| ListItem::Unmeasured {
                 size_hint: Some(item.size_hint().unwrap_or(size_hint)),
+                stale: item.stale(),
                 focus_handle: item.focus_handle(),
             })
             .collect::<Vec<_>>();
@@ -537,8 +548,9 @@ impl ListState {
     /// height may be different (e.g., streaming text, tool results
     /// loading), but the item itself still exists at the same index.
     ///
-    /// Until the items are drawn again they count their old heights, or
-    /// new estimates in a list given [`List::estimate_item_heights`].
+    /// Until the items are drawn again they count their old heights. A list
+    /// given [`List::estimate_item_heights`] counts new estimates from its
+    /// next frame on.
     pub fn remeasure_items(&self, range: Range<usize>) {
         self.remeasure_items_with_scroll_anchor(range, ScrollAnchor::Absolute);
     }
@@ -586,7 +598,8 @@ impl ListState {
 
         // Rebuild the tree, replacing items in the range with
         // Unmeasured copies that keep their focus handles. Items that changed
-        // in a list given estimates get a new estimate in the next frame.
+        // in a list given estimates get a new estimate in the next frame, and
+        // count the height they had until then.
         let estimate_again = state.estimates && matches!(scroll_anchor, ScrollAnchor::Absolute);
         let new_items = {
             let mut cursor = state.items.cursor::<Count>(());
@@ -594,11 +607,8 @@ impl ListState {
             let invalidated = cursor.slice(&Count(range.end), Bias::Right);
             new_items.extend(
                 invalidated.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: if estimate_again {
-                        None
-                    } else {
-                        item.size_hint()
-                    },
+                    size_hint: item.size_hint(),
+                    stale: estimate_again || item.stale(),
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -638,8 +648,8 @@ impl ListState {
     /// by `count` new items that must be recalculated.
     ///
     /// Items replaced one for one keep their old heights as estimates until
-    /// they're drawn again, or get new estimates in a list given
-    /// [`List::estimate_item_heights`].
+    /// they're drawn again. A list given [`List::estimate_item_heights`]
+    /// counts new estimates from its next frame on.
     pub fn splice(&self, old_range: Range<usize>, count: usize) {
         self.splice_focusable(old_range, (0..count).map(|_| None))
     }
@@ -682,7 +692,8 @@ impl ListState {
                     .iter()
                     .zip(focus_handles)
                     .map(|(old, focus_handle)| ListItem::Unmeasured {
-                        size_hint: if estimates { None } else { old.size_hint() },
+                        size_hint: old.size_hint(),
+                        stale: estimates || old.stale(),
                         focus_handle,
                     }),
                 (),
@@ -693,6 +704,7 @@ impl ListState {
                     .into_iter()
                     .map(|focus_handle| ListItem::Unmeasured {
                         size_hint: None,
+                        stale: false,
                         focus_handle,
                     }),
                 (),
@@ -1117,6 +1129,12 @@ impl StateInner {
         if let Some(drag) = self.scrollbar_drag {
             return (drag.fraction, drag.max_offset, drag.offset);
         }
+        // A list given estimates counts its new items at the mean height until
+        // its next frame estimates them. A thumb placed by that range would
+        // jump when the range changes, so the position is worked out for the
+        // reader but not kept.
+        let kept =
+            (self.estimates && self.has_items_to_estimate()).then_some(self.scrollbar_anchor);
         let mean = self.items.summary().estimated_item_height();
         let viewport = self.last_layout_bounds.unwrap_or_default().size.height;
         // The thumb follows the list's move since it was last shown, by the
@@ -1181,13 +1199,16 @@ impl StateInner {
         };
         let (speed, direction) =
             followed.map_or((0., 0), |(_, _, speed, direction, _)| (speed, direction));
-        self.scrollbar_anchor = Some(ScrollbarAnchor {
-            top,
-            fraction,
-            estimate,
-            speed,
-            direction,
-        });
+        self.scrollbar_anchor = match kept {
+            Some(anchor) => anchor,
+            None => Some(ScrollbarAnchor {
+                top,
+                fraction,
+                estimate,
+                speed,
+                direction,
+            }),
+        };
         (fraction, max_offset, shown)
     }
 
@@ -1216,10 +1237,18 @@ impl StateInner {
         let offset = self.estimated_scroll_offset(max_offset);
         let line = scroll_fraction(offset, max_offset);
         let top = self.logical_scroll_top();
+        // New items count the mean height until the list estimates them. If
+        // the list's place is beyond the range they leave, the range is the
+        // one that is wrong, and the thumb stays.
+        let beyond = self.estimates
+            && self.has_items_to_estimate()
+            && self.estimated_offset(top) > max_offset;
         if let Some(anchor) = self.scrollbar_anchor.as_mut() {
             anchor.top = top;
-            anchor.fraction =
-                bound_thumb(anchor.fraction + line - line_before, offset, max_offset, 1.);
+            if !beyond {
+                anchor.fraction =
+                    bound_thumb(anchor.fraction + line - line_before, offset, max_offset, 1.);
+            }
         }
     }
 
@@ -1364,9 +1393,18 @@ impl StateInner {
         self.items = SumTree::from_iter(measured_items, ());
     }
 
+    /// Whether some items wait for an estimate of their height: new ones,
+    /// which have no height yet, and ones that changed, which count the
+    /// height they had.
+    fn has_items_to_estimate(&self) -> bool {
+        let summary = self.items.summary();
+        summary.unknown_count > 0 || summary.stale_count > 0
+    }
+
     /// Gives the items the list hasn't measured at `width` an estimated
     /// height. That's every item when the width changed from `old_width`
-    /// or after a remeasure, and otherwise the items with no height yet.
+    /// or after a remeasure, and otherwise the items with no height yet and
+    /// those that changed.
     fn estimate_item_heights(
         &mut self,
         width: Pixels,
@@ -1401,11 +1439,13 @@ impl StateInner {
                             };
                             ListItem::Unmeasured {
                                 size_hint: hint(height),
+                                stale: false,
                                 focus_handle,
                             }
                         }
                         (ListItem::Unmeasured { .. }, _) => ListItem::Unmeasured {
                             size_hint: hint(estimate(ix, width, window, cx)),
+                            stale: false,
                             focus_handle,
                         },
                     }
@@ -1417,13 +1457,13 @@ impl StateInner {
             }
             return;
         }
-        if self.items.summary().unknown_count == 0 {
+        if !self.has_items_to_estimate() {
             return;
         }
         let mut unknown = Vec::new();
-        let mut cursor = self
-            .items
-            .filter::<_, Count>((), |summary| summary.unknown_count > 0);
+        let mut cursor = self.items.filter::<_, Count>((), |summary| {
+            summary.unknown_count > 0 || summary.stale_count > 0
+        });
         cursor.next();
         while cursor.item().is_some() {
             unknown.push(cursor.start().0);
@@ -1438,6 +1478,7 @@ impl StateInner {
             new_items.push(
                 ListItem::Unmeasured {
                     size_hint: hint(estimate(ix, width, window, cx)),
+                    stale: false,
                     focus_handle,
                 },
                 (),
@@ -2070,6 +2111,7 @@ impl Element for List {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
                     size_hint: item.size_hint(),
+                    stale: false,
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -2164,6 +2206,7 @@ impl sum_tree::Item for ListItem {
         match self {
             ListItem::Unmeasured {
                 size_hint,
+                stale,
                 focus_handle,
             } => ListItemSummary {
                 count: 1,
@@ -2176,6 +2219,7 @@ impl sum_tree::Item for ListItem {
                 },
                 has_focus_handles: focus_handle.is_some(),
                 unknown_count: usize::from(size_hint.is_none()),
+                stale_count: usize::from(*stale),
             },
             ListItem::Measured {
                 size, focus_handle, ..
@@ -2186,6 +2230,7 @@ impl sum_tree::Item for ListItem {
                 height: size.height,
                 has_focus_handles: focus_handle.is_some(),
                 unknown_count: 0,
+                stale_count: 0,
             },
         }
     }
@@ -2203,6 +2248,7 @@ impl sum_tree::ContextLessSummary for ListItemSummary {
         self.height += summary.height;
         self.has_focus_handles |= summary.has_focus_handles;
         self.unknown_count += summary.unknown_count;
+        self.stale_count += summary.stale_count;
     }
 }
 
@@ -4079,5 +4125,207 @@ mod test {
         state.remeasure();
         draw(cx);
         assert_eq!(state.max_offset_for_scrollbar().y, px(2800.));
+    }
+
+    /// Rows of the heights in `self.1`, estimated exactly, as a transcript
+    /// whose last row streams in.
+    struct StreamingView(ListState, Rc<RefCell<Vec<f32>>>);
+
+    impl Render for StreamingView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let heights = self.1.clone();
+            let estimates = self.1.clone();
+            list(self.0.clone(), move |ix, _, _| {
+                div().h(px(heights.borrow()[ix])).w_full().into_any()
+            })
+            .estimate_item_heights(move |ix, _, _, _| px(estimates.borrow()[ix]))
+            .w_full()
+            .h_full()
+        }
+    }
+
+    /// Sixty rows of 40px and a last row of 500px, in a window of 300px,
+    /// drawn once at the end.
+    fn streaming_list(
+        cx: &mut TestAppContext,
+    ) -> (
+        &mut gpui::VisualTestContext,
+        ListState,
+        Rc<RefCell<Vec<f32>>>,
+        gpui::Entity<StreamingView>,
+    ) {
+        let cx = cx.add_empty_window();
+        let mut rows = vec![40.; 59];
+        rows.push(500.);
+        let heights = Rc::new(RefCell::new(rows));
+        let state = ListState::new(60, crate::ListAlignment::Top, px(100.));
+        state.set_follow_mode(FollowMode::Tail);
+        let view = cx.update(|_, cx| cx.new(|_| StreamingView(state.clone(), heights.clone())));
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        (cx, state, heights, view)
+    }
+
+    #[gpui::test]
+    fn test_a_remeasured_item_counts_its_old_height_until_it_is_drawn_again(
+        cx: &mut TestAppContext,
+    ) {
+        let (cx, state, heights, view) = streaming_list(cx);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        let max = state.max_offset_for_scrollbar().y;
+        assert_eq!(max, px(59. * 40. + 500. - 300.));
+
+        // The last row grows. Until the list draws it again, the range
+        // counts the row at the height it had, not at the mean of the others.
+        heights.borrow_mut()[59] = 524.;
+        state.remeasure_items(59..60);
+        assert_eq!(state.max_offset_for_scrollbar().y, max);
+        // The same for a row replaced by another.
+        heights.borrow_mut()[10] = 100.;
+        state.splice(10..11, 1);
+        assert_eq!(state.max_offset_for_scrollbar().y, max);
+
+        // Drawn, the rows count the heights they are estimated at.
+        draw(cx);
+        assert_eq!(
+            state.max_offset_for_scrollbar().y,
+            px(58. * 40. + 100. + 524. - 300.)
+        );
+    }
+
+    /// A reader who has scrolled up from the end while the last row streams
+    /// in, and who holds still. Between a row's growth and the next frame an
+    /// app reads the scrollbar, to decide what to show.
+    #[gpui::test]
+    fn test_reading_the_scrollbar_before_a_frame_does_not_move_the_thumb(cx: &mut TestAppContext) {
+        let (cx, state, heights, view) = streaming_list(cx);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        // Scrolled up by 150px, which stops the list following the end.
+        state.scroll_by(px(-150.));
+        draw(cx);
+        assert!(!state.is_following_tail());
+        let held = thumb(&state);
+        assert!(held.fraction < 1. && held.fraction > 0.9, "{held:?}");
+
+        let last = 59;
+        let mut moved = 0f32;
+        for _ in 0..40 {
+            heights.borrow_mut()[last] += 24.;
+            state.remeasure_items(last..last + 1);
+            // The read the app makes before drawing.
+            let before_draw = thumb(&state);
+            let range = state.max_offset_for_scrollbar().y;
+            draw(cx);
+            let drawn = thumb(&state);
+            moved = moved.max((before_draw.fraction - held.fraction).abs());
+            moved = moved.max((drawn.fraction - held.fraction).abs());
+            assert!(
+                range >= px(59. * 40. + 500. - 300.),
+                "the range shrank to {range:?} before the frame"
+            );
+        }
+        assert!(moved < 0.001, "the thumb moved by {moved} of its track");
+        assert!(!state.is_following_tail());
+    }
+
+    /// The same, with items that replace the last row by others, which the
+    /// list has no height for until it estimates them in the next frame.
+    #[gpui::test]
+    fn test_items_that_have_no_height_yet_do_not_move_the_thumb(cx: &mut TestAppContext) {
+        let (cx, state, heights, view) = streaming_list(cx);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        // Scrolled up by 400px, so the last row is only in part on screen.
+        state.scroll_by(px(-400.));
+        draw(cx);
+        let held = thumb(&state);
+        assert!(held.fraction < 0.9, "{held:?}");
+
+        // The last row gives way to two, which together are as tall. Counted at
+        // the mean height of the others until drawn, they leave the range
+        // shorter than the place the reader is at.
+        {
+            let mut heights = heights.borrow_mut();
+            heights.pop();
+            heights.extend([300., 200.]);
+        }
+        state.splice(59..60, 2);
+        let range = state.max_offset_for_scrollbar().y;
+        assert!(range < px(2160.), "{range:?}");
+        draw(cx);
+        let drawn = thumb(&state);
+        assert!(
+            (drawn.fraction - held.fraction).abs() < 0.001,
+            "{held:?} then {drawn:?}"
+        );
+    }
+
+    /// A wheel that scrolls through the scrollbar's offset, as a scroll area
+    /// laid over the list does, while the last row streams in and the app
+    /// reads the scrollbar before each frame. Each turn moves the list by
+    /// the distance asked, wherever the thumb is.
+    #[gpui::test]
+    fn test_turns_of_the_wheel_move_the_list_by_the_distance_asked_while_a_row_streams(
+        cx: &mut TestAppContext,
+    ) {
+        let (cx, state, heights, view) = streaming_list(cx);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.draw(point(px(0.), px(0.)), size(px(100.), px(300.)), |_, _| {
+                view.clone().into_any_element()
+            });
+        };
+        let offset = |state: &ListState| {
+            let top = state.logical_scroll_top();
+            heights.borrow()[..top.item_ix].iter().sum::<f32>() + top.offset_in_item.0
+        };
+        state.scroll_by(px(-400.));
+        draw(cx);
+
+        // `dy` scrolls up when positive. At an edge of the range the scroll
+        // area leaves the turn to the list.
+        let turn = |state: &ListState, dy: f32| {
+            let max = state.max_offset_for_scrollbar().y;
+            let current = state.scroll_px_offset_for_scrollbar().y.clamp(-max, px(0.));
+            let next = (current + px(dy)).clamp(-max, px(0.));
+            if next == current {
+                state.scroll_by(px(-dy));
+            } else {
+                state.set_offset_from_scrollbar(point(px(0.), next));
+            }
+        };
+        let mut worst = 0f32;
+        let steps = [
+            -60., -60., 25., 80., -40., -120., 25., 25., -80., 120., -25.,
+        ];
+        for frame in 0..60 {
+            heights.borrow_mut()[59] += 24.;
+            state.remeasure_items(59..60);
+            // What the app reads before the frame, and the turn that comes
+            // before it too.
+            let _ = state.max_offset_for_scrollbar();
+            let dy = steps[frame % steps.len()];
+            let before = offset(&state);
+            let end = heights.borrow().iter().sum::<f32>() - 300.;
+            turn(&state, dy);
+            let moved = offset(&state) - before;
+            // (Past the start or the end the list stops short.)
+            if before - dy > 0. && before - dy < end {
+                worst = worst.max((moved + dy).abs());
+            }
+            draw(cx);
+        }
+        assert!(worst < 0.5, "a turn missed the distance asked by {worst}px");
     }
 }

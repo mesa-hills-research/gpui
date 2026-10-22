@@ -5,6 +5,19 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## Unreleased
+
+### Lists
+
+- A list given height estimates keeps the height an item had when the item changes, until its
+  next frame estimates the item again. An item invalidated by `remeasure_items` or replaced by a
+  one-for-one `splice` counted the mean height of the other items in the meantime. A reply that
+  streamed in below the reader made the scroll range too short for that moment, and the reader's
+  place fell beyond its end. Reading the scrollbar then moved the thumb to the end of its track and
+  left it there, and a turn of the wheel through `set_offset_from_scrollbar` could move the list by
+  hundreds of pixels. The scrollbar still gives a position while items wait for an estimate, but
+  doesn't keep it as the place the thumb moves on from.
+
 ## 0.1.2
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,
