@@ -1526,6 +1526,14 @@ pub trait PlatformTextSystem: Send + Sync {
     ) -> Result<(Size<DevicePixels>, Vec<u8>)>;
     /// Layout a line of text with the given font runs.
     fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout;
+    /// Whether the layout of a line stays the same when it's cut after a space and each part is
+    /// laid out on its own, with the parts' glyphs and widths put side by side. That holds when
+    /// the text system shapes each word by itself and a space is in the primary font. GPUI then
+    /// lays long lines out in cached parts, so that changing a long paragraph shapes only the
+    /// parts it touches. The default is `false`, which lays out every line whole.
+    fn shapes_words_independently(&self) -> bool {
+        false
+    }
     /// Returns the recommended text rendering mode for the given font and size.
     fn recommended_rendering_mode(&self, _font_id: FontId, _font_size: Pixels)
     -> TextRenderingMode;

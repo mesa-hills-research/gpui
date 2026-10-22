@@ -15,6 +15,8 @@ use std::{
 
 use super::LineWrapper;
 
+mod segments;
+
 /// A laid out and styled line of text
 #[derive(Default, Debug)]
 pub struct LineLayout {
@@ -459,6 +461,8 @@ impl WrappedLineLayout {
 pub(crate) struct LineLayoutCache {
     previous_frame: Mutex<FrameCache>,
     current_frame: RwLock<FrameCache>,
+    /// The shaped segments of long lines, which outlive the frames' caches.
+    segments: Mutex<segments::SegmentCache>,
     platform_text_system: Arc<dyn PlatformTextSystem>,
     /// Advances when [`TextSystem::add_fonts`] successfully changes the font database.
     font_generation: Arc<AtomicUsize>,
@@ -526,6 +530,7 @@ impl LineLayoutCache {
         Self {
             previous_frame: Mutex::default(),
             current_frame: RwLock::default(),
+            segments: Mutex::default(),
             platform_text_system,
             font_generation,
             cached_font_generation: AtomicUsize::new(cached_font_generation),
@@ -721,13 +726,7 @@ impl LineLayoutCache {
             layout
         } else {
             let text = SharedString::from(text);
-            let mut layout = self
-                .platform_text_system
-                .layout_line(&text, font_size, runs);
-
-            if let Some(force_width) = force_width {
-                apply_force_width_to_layout(&mut layout, force_width);
-            }
+            let layout = self.shape_line(&text, font_size, runs, force_width);
 
             let key = Arc::new(CacheKey {
                 text,
@@ -872,13 +871,7 @@ impl LineLayoutCache {
         }
 
         let text = materialize_text();
-        let mut layout = self
-            .platform_text_system
-            .layout_line(&text, font_size, runs);
-
-        if let Some(force_width) = force_width {
-            apply_force_width_to_layout(&mut layout, force_width);
-        }
+        let layout = self.shape_line(&text, font_size, runs, force_width);
 
         let key = Arc::new(HashedCacheKey {
             text_hash,
@@ -896,6 +889,63 @@ impl LineLayoutCache {
         layout
     }
 
+    /// Shapes a line that no cache has. A long line is shaped in segments when the platform
+    /// shapes each word on its own, so that a line that changes shapes only the segments that
+    /// changed, and takes the rest from the segment cache.
+    fn shape_line(
+        &self,
+        text: &str,
+        font_size: Pixels,
+        runs: &[FontRun],
+        force_width: Option<Pixels>,
+    ) -> LineLayout {
+        let cuts =
+            if force_width.is_none() && self.platform_text_system.shapes_words_independently() {
+                segments::cut_points(text)
+            } else {
+                None
+            };
+        let mut layout = match cuts {
+            Some(cuts) => self.shape_segments(text, &cuts, font_size, runs),
+            None => self.platform_text_system.layout_line(text, font_size, runs),
+        };
+        if let Some(force_width) = force_width {
+            apply_force_width_to_layout(&mut layout, force_width);
+        }
+        layout
+    }
+
+    fn shape_segments(
+        &self,
+        text: &str,
+        cuts: &[usize],
+        font_size: Pixels,
+        runs: &[FontRun],
+    ) -> LineLayout {
+        let mut parts = SmallVec::<[(usize, Arc<LineLayout>); 32]>::new();
+        let mut run_clipper = segments::RunClipper::new(runs);
+        let mut start = 0;
+        for end in cuts.iter().copied().chain([text.len()]) {
+            let segment = &text[start..end];
+            let segment_runs = run_clipper.clip(start..end);
+            let cached = self.segments.lock().get(segment, font_size, &segment_runs);
+            let layout = cached.unwrap_or_else(|| {
+                let layout = Arc::new(self.platform_text_system.layout_line(
+                    segment,
+                    font_size,
+                    &segment_runs,
+                ));
+                self.segments
+                    .lock()
+                    .insert(segment, font_size, &segment_runs, layout.clone());
+                layout
+            });
+            parts.push((start, layout));
+            start = end;
+        }
+        segments::join(&parts, text.len(), font_size)
+    }
+
     fn clear_if_font_generation_changed(&self) -> usize {
         let font_generation = self.font_generation.load(Ordering::Acquire);
         if self.cached_font_generation.load(Ordering::Acquire) == font_generation {
@@ -909,6 +959,7 @@ impl LineLayoutCache {
 
         *current_frame = FrameCache::default();
         *self.previous_frame.lock() = FrameCache::default();
+        self.segments.lock().clear();
         self.cached_font_generation
             .store(font_generation, Ordering::Release);
         font_generation
@@ -1210,5 +1261,301 @@ mod tests {
 
         let positions = glyph_x_positions(&layout);
         assert_eq!(positions, vec![0.5, 0.5]);
+    }
+
+    /// A text system with a font of fixed widths that counts what it is asked to shape.
+    struct CountingTextSystem {
+        words_are_independent: bool,
+        shaped: Mutex<Vec<usize>>,
+    }
+
+    impl CountingTextSystem {
+        fn new(words_are_independent: bool) -> Arc<Self> {
+            Arc::new(Self {
+                words_are_independent,
+                shaped: Mutex::default(),
+            })
+        }
+
+        /// The lengths of the texts shaped since the last call.
+        fn take_shaped(&self) -> Vec<usize> {
+            std::mem::take(&mut *self.shaped.lock())
+        }
+    }
+
+    impl PlatformTextSystem for CountingTextSystem {
+        fn add_fonts(&self, fonts: Vec<std::borrow::Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            crate::NoopTextSystem.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn font_id(&self, descriptor: &crate::Font) -> anyhow::Result<FontId> {
+            crate::NoopTextSystem.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> crate::FontMetrics {
+            crate::NoopTextSystem.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<crate::Bounds<f32>> {
+            crate::NoopTextSystem.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            crate::NoopTextSystem.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+            crate::NoopTextSystem.glyph_for_char(font_id, ch)
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &crate::RenderGlyphParams,
+        ) -> anyhow::Result<crate::Bounds<crate::DevicePixels>> {
+            crate::NoopTextSystem.glyph_raster_bounds(params)
+        }
+
+        fn rasterize_glyph(
+            &self,
+            params: &crate::RenderGlyphParams,
+            raster_bounds: crate::Bounds<crate::DevicePixels>,
+        ) -> anyhow::Result<(Size<crate::DevicePixels>, Vec<u8>)> {
+            crate::NoopTextSystem.rasterize_glyph(params, raster_bounds)
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.shaped.lock().push(text.len());
+            crate::NoopTextSystem.layout_line(text, font_size, runs)
+        }
+
+        fn shapes_words_independently(&self) -> bool {
+            self.words_are_independent
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> crate::TextRenderingMode {
+            crate::NoopTextSystem.recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    struct SegmentFixture {
+        text_system: Arc<CountingTextSystem>,
+        font_generation: Arc<AtomicUsize>,
+        cache: LineLayoutCache,
+    }
+
+    impl SegmentFixture {
+        fn new(words_are_independent: bool) -> Self {
+            let text_system = CountingTextSystem::new(words_are_independent);
+            let font_generation = Arc::new(AtomicUsize::new(0));
+            let cache = LineLayoutCache::new(text_system.clone(), font_generation.clone());
+            Self {
+                text_system,
+                font_generation,
+                cache,
+            }
+        }
+
+        fn layout(&self, text: &str, runs: &[FontRun]) -> Arc<LineLayout> {
+            self.cache
+                .layout_line(SharedString::from(text.to_owned()), px(10.), runs, None)
+        }
+    }
+
+    fn one_font(len: usize) -> [FontRun; 1] {
+        [FontRun {
+            len,
+            font_id: FontId(0),
+        }]
+    }
+
+    /// Fonts that change every `step` bytes, in the middle of words.
+    fn alternating_fonts(len: usize, step: usize) -> Vec<FontRun> {
+        (0..len.div_ceil(step))
+            .map(|ix| FontRun {
+                len: step.min(len - ix * step),
+                font_id: FontId(ix % 2),
+            })
+            .collect()
+    }
+
+    type GlyphSummary = (u32, f32, f32, usize, bool);
+
+    fn summarize(layout: &LineLayout) -> (Vec<(usize, Vec<GlyphSummary>)>, [f32; 4], usize) {
+        let runs = layout
+            .runs
+            .iter()
+            .map(|run| {
+                let glyphs = run
+                    .glyphs
+                    .iter()
+                    .map(|glyph| {
+                        (
+                            glyph.id.0,
+                            f32::from(glyph.position.x),
+                            f32::from(glyph.position.y),
+                            glyph.index,
+                            glyph.is_emoji,
+                        )
+                    })
+                    .collect();
+                (run.font_id.0, glyphs)
+            })
+            .collect();
+        let metrics = [
+            f32::from(layout.font_size),
+            f32::from(layout.width),
+            f32::from(layout.ascent),
+            f32::from(layout.descent),
+        ];
+        (runs, metrics, layout.len)
+    }
+
+    #[test]
+    fn a_line_in_segments_is_laid_out_as_the_whole_line() {
+        let ascii = segments::tests::paragraph(20_000, 1);
+        let mut emoji = ascii.clone();
+        emoji.insert_str(emoji.len() / 2, " 😀 👍🏽 ");
+        let samples = [ascii.as_str(), emoji.as_str(), " leading spaces ", ""];
+        for text in samples {
+            let text = if text.len() < 100 {
+                format!("{text}{}", segments::tests::paragraph(3000, 2))
+            } else {
+                text.to_owned()
+            };
+            for runs in [
+                one_font(text.len()).to_vec(),
+                alternating_fonts(text.len(), 777),
+                alternating_fonts(text.len(), 40),
+            ] {
+                let whole = SegmentFixture::new(false);
+                let segmented = SegmentFixture::new(true);
+                let expected = summarize(&whole.layout(&text, &runs));
+                let actual = summarize(&segmented.layout(&text, &runs));
+                assert_eq!(whole.text_system.take_shaped(), [text.len()]);
+                let shaped = segmented.text_system.take_shaped();
+                assert!(shaped.len() > 5);
+                assert_eq!(shaped.iter().sum::<usize>(), text.len());
+                assert!(expected == actual, "layouts differ");
+            }
+        }
+    }
+
+    #[test]
+    fn a_wrapped_line_in_segments_wraps_where_the_whole_line_does() {
+        let text = SharedString::from(segments::tests::paragraph(20_000, 6));
+        let runs = alternating_fonts(text.len(), 500);
+        let whole = SegmentFixture::new(false);
+        let segmented = SegmentFixture::new(true);
+        for wrap_width in [30., 65., 120., 333., 600., 1001.] {
+            let wrap_width = Some(px(wrap_width));
+            let expected =
+                whole
+                    .cache
+                    .layout_wrapped_line(text.clone(), px(10.), &runs, wrap_width, None);
+            let actual =
+                segmented
+                    .cache
+                    .layout_wrapped_line(text.clone(), px(10.), &runs, wrap_width, None);
+            assert_eq!(expected.wrap_boundaries, actual.wrap_boundaries);
+            assert!(expected.wrap_boundaries.len() > 10);
+        }
+    }
+
+    #[test]
+    fn a_changed_line_shapes_only_the_segments_that_changed() {
+        let fixture = SegmentFixture::new(true);
+        let text = segments::tests::paragraph(20_000, 7);
+        let layout = |text: &str| fixture.layout(text, &one_font(text.len()));
+
+        layout(&text);
+        let first = fixture.text_system.take_shaped();
+        assert!(first.len() > 20, "{}", first.len());
+
+        // A line laid out again in the next frame is kept whole.
+        fixture.cache.finish_frame();
+        layout(&text);
+        assert_eq!(fixture.text_system.take_shaped(), Vec::<usize>::new());
+
+        // One that no frame has asked for in a while still has its segments.
+        for _ in 0..3 {
+            fixture.cache.finish_frame();
+        }
+        layout(&text);
+        assert_eq!(fixture.text_system.take_shaped(), Vec::<usize>::new());
+
+        // Text added at the end shapes its segment again.
+        let mut appended = text.clone();
+        appended.push_str("one more word ");
+        layout(&appended);
+        let shaped = fixture.text_system.take_shaped();
+        assert!((1..=2).contains(&shaped.len()), "{shaped:?}");
+        assert!(shaped.iter().sum::<usize>() < 2000);
+
+        // So does a word changed in the middle.
+        let mut edited = appended.clone();
+        let at = edited[edited.len() / 2..].find(' ').unwrap() + edited.len() / 2;
+        edited.insert_str(at, " inserted");
+        layout(&edited);
+        let shaped = fixture.text_system.take_shaped();
+        assert!((1..=4).contains(&shaped.len()), "{shaped:?}");
+        assert!(shaped.iter().sum::<usize>() < 4000);
+
+        // And the segments of the text before the change are still there.
+        layout(&text);
+        assert_eq!(fixture.text_system.take_shaped(), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn a_line_is_shaped_whole_when_segments_would_not_match() {
+        let text = segments::tests::paragraph(20_000, 8);
+
+        // The platform doesn't shape words on their own.
+        let fixture = SegmentFixture::new(false);
+        fixture.layout(&text, &one_font(text.len()));
+        assert_eq!(fixture.text_system.take_shaped(), [text.len()]);
+
+        // The characters follow a grid.
+        let fixture = SegmentFixture::new(true);
+        fixture.cache.layout_line(
+            SharedString::from(text.clone()),
+            px(10.),
+            &one_font(text.len()),
+            Some(px(6.)),
+        );
+        assert_eq!(fixture.text_system.take_shaped(), [text.len()]);
+
+        // The line is short, or has right-to-left text in it.
+        let short = &text[..800];
+        fixture.layout(short, &one_font(short.len()));
+        assert_eq!(fixture.text_system.take_shaped(), [short.len()]);
+        let bidirectional = format!("{text} \u{5d0}\u{5d1}\u{5d2}");
+        fixture.layout(&bidirectional, &one_font(bidirectional.len()));
+        assert_eq!(fixture.text_system.take_shaped(), [bidirectional.len()]);
+    }
+
+    #[test]
+    fn a_change_of_fonts_shapes_every_segment_again() {
+        let fixture = SegmentFixture::new(true);
+        let text = segments::tests::paragraph(20_000, 9);
+        fixture.layout(&text, &one_font(text.len()));
+        let first = fixture.text_system.take_shaped();
+        assert!(first.len() > 20);
+
+        fixture.font_generation.fetch_add(1, Ordering::AcqRel);
+        fixture.layout(&text, &one_font(text.len()));
+        assert_eq!(fixture.text_system.take_shaped(), first);
+        assert_eq!(fixture.cache.segments.lock().len(), first.len());
     }
 }

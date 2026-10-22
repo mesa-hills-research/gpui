@@ -15,6 +15,19 @@ detail.
   with the view's drawing. A cached view draws again when accessibility starts, to have nodes to
   copy afterwards.
 
+### Text
+
+- A long line of text is shaped in segments of a few hundred bytes on Linux and Android, and each
+  segment is kept for later frames. A long paragraph that grows or changes by a word shapes the
+  segment it touches instead of the whole paragraph. On a paragraph of 20 KB, a frame that adds
+  a word takes 1.2 ms instead of 9.6 ms, and one that edits a word in the middle takes 1.0 ms
+  instead of 9.0 ms. At 100 KB they take 2.7 and 2.9 ms instead of 51 and 52 ms. A paragraph
+  drawn for the first time takes about 10% longer. Glyphs, line breaks and wrapping are those
+  of the whole line, and positions differ by no more than the rounding of the sums of the glyphs'
+  widths. Lines under 1 KB, lines with right-to-left text, tabs or control characters, and lines
+  on other platforms are shaped whole. A text system opts in with
+  `PlatformTextSystem::shapes_words_independently`.
+
 ## 0.1.1
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,
