@@ -434,6 +434,53 @@ impl A11y {
         }
     }
 
+    /// Takes back the nodes finished since position `index`, which a prepaint that is done again
+    /// pushed the first time, along with what they registered. Without it the second time would
+    /// push them again, and the tree would have the nodes of the first time, or panic in debug
+    /// builds.
+    pub(crate) fn truncate_nodes(&mut self, index: usize) {
+        if !self.is_active() || index >= self.nodes.all_nodes.len() {
+            return;
+        }
+        // The nodes at the top of what is taken back are children of the node being built.
+        let top = self.nodes.depths[index..]
+            .iter()
+            .copied()
+            .min()
+            .unwrap_or_default();
+        let mut tops = FxHashSet::default();
+        for ((id, _), depth) in self.nodes.all_nodes[index..]
+            .iter()
+            .zip(&self.nodes.depths[index..])
+        {
+            self.nodes.seen_ids.remove(id);
+            self.focus_ids.remove(id);
+            self.node_bounds.remove(id);
+            #[cfg(debug_assertions)]
+            self.nodes.node_info.remove(id);
+            if self.nodes.focus == Some(*id) {
+                self.nodes.focus = None;
+            }
+            if self.nodes.active_descendant == Some(*id) {
+                self.nodes.active_descendant = None;
+            }
+            if *depth == top {
+                tops.insert(*id);
+            }
+        }
+        if let Some(parent) = self.nodes.nodes_stack.last_mut() {
+            let children = parent
+                .children()
+                .iter()
+                .copied()
+                .filter(|child| !tops.contains(child))
+                .collect::<Vec<_>>();
+            parent.set_children(children);
+        }
+        self.nodes.all_nodes.truncate(index);
+        self.nodes.depths.truncate(index);
+    }
+
     /// Moves the listeners that the previous frame registered between the
     /// positions `range` to this frame, for a cached view that is reused.
     pub(crate) fn reuse_listeners(&mut self, range: Range<usize>) {

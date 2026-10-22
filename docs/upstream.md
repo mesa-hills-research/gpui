@@ -217,8 +217,9 @@ adds the same line.
   view copies its range into the new frame under the node being built, with the bounds, focus
   handles, focus and active descendant that belong to it, and moves its listeners over like
   mouse listeners. A cached view isn't reused while the previous frame has no nodes, which is
-  the first frame after accessibility starts. `mhr-gpui-apple`'s copy of `window.rs` under
-  `vendor/gpui` follows it.
+  the first frame after accessibility starts. `Window::transact`, which a list uses to draw its
+  items again after an item asks to scroll, takes back the nodes the first drawing pushed.
+  `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui` follows it.
 - **Paint animations**, in `mhr-gpui`'s `src/elements/animation.rs`, `src/scene.rs` and
   `src/window.rs`. An animation notified the view that held the element, so each frame drew that
   view and the views above it. `AnimationExt::with_paint_animation` lays an element out and

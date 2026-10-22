@@ -9,6 +9,9 @@ detail.
 
 ### Views
 
+- A list that draws its items twice in a frame, as it does when an item asks to scroll, reports
+  them to the accessibility tree once. Its second drawing pushed the nodes of the first again,
+  which panicked in debug builds and left the first drawing's places in the tree in release builds.
 - A cached view that is reused keeps its nodes in the accessibility tree. Every frame that
   reused one used to leave out its nodes, its focus and its action handlers, so a screen reader
   found holes where cached views were. The nodes are now copied from the previous frame along

@@ -1147,6 +1147,79 @@ mod tests {
         fixture.click_each_group(cx);
     }
 
+    /// A list of accessible items whose third asks to scroll to reveal part of the one above.
+    struct AutoscrollList(ListState);
+
+    impl Render for AutoscrollList {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            list(self.0.clone(), |ix, _, _| {
+                let item = div()
+                    .id(("item", ix))
+                    .role(Role::ListItem)
+                    .aria_label(format!("item {ix}"))
+                    .h(px(20.))
+                    .w_full();
+                if ix == 2 {
+                    item.child(
+                        crate::canvas(
+                            |bounds, window, _| {
+                                window.request_autoscroll(Bounds::from_corners(
+                                    point(bounds.left(), bounds.top() - px(30.)),
+                                    point(bounds.right(), bounds.top() + px(5.)),
+                                ));
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    )
+                    .into_any_element()
+                } else {
+                    item.into_any_element()
+                }
+            })
+            .size_full()
+        }
+    }
+
+    #[gpui::test]
+    fn a_list_that_draws_its_items_twice_reports_them_once(cx: &mut TestAppContext) {
+        let state = ListState::new(5, ListAlignment::Top, px(10.));
+        state.scroll_to(crate::ListOffset {
+            item_ix: 2,
+            offset_in_item: px(0.),
+        });
+        let window = cx.open_window(size(px(100.), px(60.)), {
+            let state = state.clone();
+            move |window, _| {
+                // Accessibility is active when the first frame, which scrolls, is drawn.
+                window.a11y.activate_for_test();
+                AutoscrollList(state)
+            }
+        });
+        cx.run_until_parked();
+
+        let tree = a11y_tree(window.into(), cx);
+        let mut ids: Vec<_> = tree.nodes.iter().map(|(id, _)| *id).collect();
+        let count = ids.len();
+        ids.sort_by_key(|id| id.0);
+        ids.dedup();
+        assert_eq!(ids.len(), count, "a node is in the tree twice");
+        // The list scrolled to 10px into the first item, so it shows the first four.
+        assert_eq!(state.logical_scroll_top().item_ix, 0);
+        let scale_factor = cx
+            .update_window(window.into(), |_, window, _| window.scale_factor())
+            .unwrap() as f64;
+        let items: Vec<_> = a11y_shape(&tree)
+            .into_iter()
+            .filter_map(|node| Some((node.label?, node.bounds?.y0)))
+            .collect();
+        // Each is where the second drawing put it, the first item 10px above the list.
+        let expected: Vec<_> = (0..4)
+            .map(|ix| (format!("item {ix}"), (ix as f64 * 20. - 10.) * scale_factor))
+            .collect();
+        assert_eq!(items, expected);
+    }
+
     /// A cached list of accessible items. The first reacts to clicks, the
     /// second to the screen reader's click action, and the third can be
     /// focused.

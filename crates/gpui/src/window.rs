@@ -4475,6 +4475,7 @@ impl Window {
                 .accessed_element_states
                 .truncate(index.accessed_element_states_index);
             self.text_system.truncate_layouts(index.line_layout_index);
+            self.a11y.truncate_nodes(index.a11y_nodes_index);
         }
         result
     }
