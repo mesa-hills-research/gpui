@@ -17,6 +17,10 @@ detail.
   left it there, and a turn of the wheel through `set_offset_from_scrollbar` could move the list by
   hundreds of pixels. The scrollbar still gives a position while items wait for an estimate, but
   doesn't keep it as the place the thumb moves on from.
+- The scrollbar's thumb stays on its track. A thumb that moved down with more speed than the list
+  had distance left to the end went past 1, and the offset the scrollbar showed went past the end of
+  its range. A wheel turn through `set_offset_from_scrollbar` then moved the list by the turn and
+  by the excess as well.
 
 ## 0.1.2
 

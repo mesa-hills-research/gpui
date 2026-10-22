@@ -1969,7 +1969,9 @@ fn bound_thumb(fraction: f32, offset: Pixels, max_offset: Pixels, pull: f32) -> 
     let line = offset / max_offset;
     let room = line.min(1. - line) * THUMB_LEAD;
     let bound = fraction.clamp(line - room, line + room);
-    bound + (fraction - bound) * (1. - pull.clamp(0., 1.))
+    // A thumb that has more speed than the list has distance left would
+    // pass the end of its track.
+    (bound + (fraction - bound) * (1. - pull.clamp(0., 1.))).clamp(0., 1.)
 }
 
 impl std::fmt::Debug for ListItem {
@@ -4327,5 +4329,22 @@ mod test {
             draw(cx);
         }
         assert!(worst < 0.5, "a turn missed the distance asked by {worst}px");
+    }
+
+    #[test]
+    fn test_the_thumb_stays_on_its_track() {
+        // A thumb that was moving down with more speed than the list has
+        // distance left would pass the end of its track.
+        for fraction in [-0.2, 0., 0.4, 1., 1.05, 1.3] {
+            for offset in [10., 500., 940., 995.] {
+                for pull in [0., 0.1, 1.] {
+                    let bounded = super::bound_thumb(fraction, px(offset), px(1000.), pull);
+                    assert!(
+                        (0. ..=1.).contains(&bounded),
+                        "{fraction} at {offset} pulled {pull} gives {bounded}"
+                    );
+                }
+            }
+        }
     }
 }

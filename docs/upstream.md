@@ -175,9 +175,10 @@ adds the same line.
   its place, and both ends of the track are the ends of the list. Its speed changes by at most half
   of itself over a viewport's height of scrolling, so a correction spreads over the following
   steps, and a thumb that leads or trails the list by too much is pulled back gradually instead of
-  clamped at once. A dragged thumb keeps its size and stays under the pointer. Wheel and track
-  scrolling through `set_offset_from_scrollbar` moves the list by the distance asked. The tests at
-  the end of `list.rs` cover it.
+  clamped at once. The thumb never leaves its track, whatever speed it carries. A dragged thumb
+  keeps its size and stays under the pointer. Wheel and track scrolling through
+  `set_offset_from_scrollbar` moves the list by the distance asked. The tests at the end of
+  `list.rs` cover it.
 - **Height estimates for list items not drawn yet**, in `mhr-gpui`'s `src/elements/list.rs`.
   `List::estimate_item_heights` takes a closure that estimates an item's height at a width from
   what's known about it, such as its lines of text times their height. The scrollbar counts the
