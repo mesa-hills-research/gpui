@@ -5,6 +5,27 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## 0.1.6
+
+Published as `mhr-gpui`, `mhr-gpui-macros`, `mhr-gpui-wgpu`, `mhr-gpui-linux`,
+`mhr-gpui-windows`, `mhr-gpui-macos`, `mhr-gpui-apple`, `mhr-gpui-web`, `mhr-gpui-platform` and
+`mhr-gpui-screenshot`. They pin each other exactly, so an app that uses several of them gets them
+all at 0.1.6. The other crates stay at 0.1.0.
+
+### Macros
+
+- The macros find GPUI Kit under the name it is published as, `mhr-gpui-kit`. An app that gets
+  GPUI through the kit has `#[gpui::test]`, `actions!` and the derives point their `gpui::` paths at
+  it, and they looked for the package `gpui-kit` alone. A dependency on `mhr-gpui-kit`, with or
+  without a rename, gave paths to a `gpui` the app doesn't have. They try `mhr-gpui-kit` first and
+  `gpui-kit` second, so an app that still depends on the old name builds as before.
+
+### Test support
+
+- `mhr-gpui-screenshot` is on crates.io. It renders GPUI views headlessly on Linux and compares
+  them with golden PNGs, as [docs/screenshots.md](docs/screenshots.md) describes. It was a git
+  dependency before, and its version follows `mhr-gpui`'s from 0.1.6.
+
 ## 0.1.5
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,

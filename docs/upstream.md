@@ -106,13 +106,15 @@ Version 0.1.1 covered eight crates, since `mhr-gpui` and four platform crates ch
 more pin them. Version 0.1.2 covers the same eight, since `mhr-gpui`, `mhr-gpui-apple` and
 `mhr-gpui-wgpu` changed and the other five pin `mhr-gpui`. So does 0.1.3, where only `mhr-gpui`
 changed. The other seven pin it exactly, so each needs a new version for its pin to follow. The
-same goes for 0.1.4 and 0.1.5. The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
+same goes for 0.1.4 and 0.1.5. Version 0.1.6 covers ten, since `mhr-gpui-macros` changed and
+`mhr-gpui` pins it, and `mhr-gpui-screenshot` was published for the first time and pins `mhr-gpui`
+and `mhr-gpui-wgpu`. The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
 `git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
 the release by name, since cargo refuses a version that's already on crates.io:
 
 ```sh
-packages="-p mhr-gpui -p mhr-gpui-wgpu -p mhr-gpui-linux -p mhr-gpui-windows -p mhr-gpui-apple \
-  -p mhr-gpui-macos -p mhr-gpui-web -p mhr-gpui-platform"
+packages="-p mhr-gpui-macros -p mhr-gpui -p mhr-gpui-wgpu -p mhr-gpui-linux -p mhr-gpui-windows \
+  -p mhr-gpui-apple -p mhr-gpui-macos -p mhr-gpui-web -p mhr-gpui-platform -p mhr-gpui-screenshot"
 cargo publish --dry-run --locked $packages
 cargo publish --locked $packages
 ```
