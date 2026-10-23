@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use std::{
     cell::RefCell,
     env,
@@ -554,7 +555,7 @@ impl Platform for LinuxPlatform {
     }
 
     fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
-        Rc::new(gpui::DummyKeyboardMapper)
+        self.connection.borrow().keyboard_mapper()
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
