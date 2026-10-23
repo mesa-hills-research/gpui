@@ -20,9 +20,11 @@ detail.
   mapper, so `ctrl-shift-7` meant Ctrl+& on every layout and never fired on a German keyboard, where
   Shift+7 types `/`. The new mapper reads the 21 symbol keys of a US keyboard, and the ISO key left
   of Z, from the xkb layout in use, as the Windows mapper does. A binding that the US reading
-  already gets right stays as written, so a US layout and the way a binding shows are unchanged.
-  `use_key_equivalents` has no effect on Linux. macOS keeps its mapper, which only remaps key
-  equivalents.
+  already gets right stays as written, so a US layout and the way a binding shows are unchanged. A
+  key that types a non-ASCII symbol, such as `£` on a UK keyboard, keeps the US reading. A binding
+  keeps the keys it was loaded with, so an app loads its keymap again when
+  `App::on_keyboard_layout_change` fires. `use_key_equivalents` has no effect on Linux. macOS keeps
+  its mapper, which only remaps key equivalents.
 
 ### Keyboard
 

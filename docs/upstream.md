@@ -301,8 +301,8 @@ adds the same line.
   The symbols are those of a US keyboard. A UK keyboard types `"` with Shift+2 and `~` on its `#`
   key, German, French and Czech keyboards type many of these symbols on other keys or with AltGr,
   and French and Czech keyboards send the digit for Ctrl+Shift+1. An app binds the symbol such a
-  layout sends, and `ctrl-shift-1` can't match on a French or Czech one. The tests at the end of
-  `keystroke.rs`, `keymap.rs` and `key_dispatch.rs` cover it.
+  layout sends, and without the keyboard mapper `ctrl-shift-1` can't match on a French or Czech
+  one. The tests at the end of `keystroke.rs`, `keymap.rs` and `key_dispatch.rs` cover it.
 - **A keyboard mapper for Linux**, in `mhr-gpui-linux`'s `src/linux/keyboard_mapper.rs`, with a
   `keyboard_mapper` method on `DisplayConnection`, the X11 client and the Wayland connection. Linux
   returned `DummyKeyboardMapper`, so the Shift fold above was its only reading, and it assumes a US
@@ -312,12 +312,16 @@ adds the same line.
   `WindowsKeyboardMapper` does. `KeyBinding::load` with `cx.keyboard_mapper()` turns `ctrl-shift-7`
   into `ctrl-/` on a German layout, which is what Ctrl+Shift+7 sends there. A key that doesn't type
   an ASCII symbol or digit at both levels is skipped, so letters (a French layout puts `m` on the
-  `;` key) keep their Shift. A binding that the fold already reads the same way stays as written, so
-  a US layout changes nothing. Linux has no display fields, so a binding that changes shows the
+  `;` key) keep their Shift, and so do keys that type a non-ASCII symbol (`£` on a UK `3`, `§` on a
+  German one, `ř` on a Czech `5`), which keep the US reading, so `ctrl-shift-3` still reads as
+  `ctrl-#` there. A binding that the fold already reads the same way stays as written, so a US
+  layout changes nothing. Linux has no display fields, so a binding that changes shows the
   symbol. `use_key_equivalents` isn't used, since Linux sends the US key for a layout with no ASCII
   keys. `KeyBinding::new` keeps the dummy mapper. macOS stays as it is, since `MacKeyboardMapper`
   only remaps key equivalents and a layout-aware reading there would need `UCKeyTranslate`. The
   tests in `keyboard_mapper.rs` compile keymaps for `us`, `de` and `fr` from names, with no display.
+  The mapping happens in `KeyBinding::load`, so a binding keeps the keys it was loaded with after a
+  layout change, and an app loads its keymap again from `App::on_keyboard_layout_change`.
 - **Tests that build**, in the `Cargo.toml` of `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-web`,
   `mhr-gpui-macos`, `mhr-gpui-macros`, `mhr-sum-tree` and `mhr-zlog`, and in `mhr-gpui`'s
   `src/randomized_element_tree.rs`. The release tooling leaves out `[dev-dependencies]`, so these
