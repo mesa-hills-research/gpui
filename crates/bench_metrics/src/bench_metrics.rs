@@ -2121,11 +2121,34 @@ mod tests {
     fn resource_counter_counts_page_faults_and_context_switches() {
         let faults = ResourceCounter::new(ResourceMetric::MinorPageFaults, MetricScope::Process)
             .expect("RUSAGE_SELF is always available");
-        let start = faults.start();
-        // Touch fresh pages: a 4 MiB allocation faults in ~1000 pages.
-        let buffer = vec![1_u8; 4 << 20];
-        std::hint::black_box(&buffer);
-        assert!(faults.end(start) > 100.0);
+        // Touch fresh pages: 4 MiB faults in ~1000 of them. They come straight from the kernel
+        // because malloc may reuse pages that are already mapped, and huge pages are turned off
+        // for them because one 2 MiB fault would replace 512 of the small ones.
+        const LEN: usize = 4 << 20;
+        // SAFETY: an anonymous private mapping of `LEN` bytes that is only written inside
+        // its bounds, one byte per page, and unmapped before it goes out of scope.
+        let faulted = unsafe {
+            let pages = libc::mmap(
+                std::ptr::null_mut(),
+                LEN,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_PRIVATE | libc::MAP_ANON,
+                -1,
+                0,
+            );
+            assert_ne!(pages, libc::MAP_FAILED, "mmap failed");
+            #[cfg(target_os = "linux")]
+            libc::madvise(pages, LEN, libc::MADV_NOHUGEPAGE);
+            let page_size = libc::sysconf(libc::_SC_PAGESIZE) as usize;
+            let start = faults.start();
+            for offset in (0..LEN).step_by(page_size) {
+                pages.cast::<u8>().add(offset).write_volatile(1);
+            }
+            let faulted = faults.end(start);
+            libc::munmap(pages, LEN);
+            faulted
+        };
+        assert!(faulted > 100.0, "touching 4 MiB faulted in {faulted} pages");
 
         #[cfg(target_os = "linux")]
         {
@@ -2135,7 +2158,12 @@ mod tests {
             )
             .expect("RUSAGE_THREAD is available on Linux");
             let start = switches.start();
-            for _ in 0..5 {
+            // A sleep that is over before the thread is scheduled out is not counted, so keep
+            // sleeping until five switches show.
+            for _ in 0..1000 {
+                if switches.end(start) >= 5.0 {
+                    break;
+                }
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
             assert!(switches.end(start) >= 5.0);
