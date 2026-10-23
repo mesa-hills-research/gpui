@@ -129,6 +129,14 @@ impl Keystroke {
             && self.without_shift_on_symbol() == target.inner.without_shift_on_symbol()
     }
 
+    /// The modifiers, key and key character of this keystroke with Shift folded into a symbol
+    /// key, as [`Keystroke::should_match`] reads it. `ctrl-shift-\` and `ctrl-|` give the same
+    /// value, so keymaps compare bindings by it.
+    pub(crate) fn folded(&self) -> (Modifiers, &str, Option<&str>) {
+        let (modifiers, key) = self.without_shift_on_symbol();
+        (modifiers, key, self.key_char.as_deref())
+    }
+
     /// The modifiers and key of this keystroke with Shift folded into a symbol key.
     ///
     /// Ctrl+Shift+\ on a US keyboard arrives as `ctrl-|` from Windows, Linux and macOS, which

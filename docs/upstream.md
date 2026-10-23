@@ -295,7 +295,9 @@ adds the same line.
   and whichever is typed, and the other modifiers must agree. A `KeybindingKeystroke` keeps the
   spelling it was written with, so menus, palettes and the Windows mapper's display fields don't
   change, and a keystroke that matched before still matches. A chord bound in both spellings is two
-  bindings for one keystroke, ordered like any two, and `Unbind` still compares spelled keystrokes.
+  bindings for one keystroke, ordered like any two. `Unbind`, `null`, `bindings_for_action` and the
+  pending-sequence check in `src/keymap.rs` compare bindings through `Keystroke::folded`, the same
+  folding, so either spelling disables the other.
   The symbols are those of a US keyboard. A UK keyboard types `"` with Shift+2 and `~` on its `#`
   key, German, French and Czech keyboards type many of these symbols on other keys or with AltGr,
   and French and Czech keyboards send the digit for Ctrl+Shift+1. An app binds the symbol such a

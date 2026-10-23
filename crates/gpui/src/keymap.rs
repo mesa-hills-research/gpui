@@ -5,7 +5,7 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{Action, AsKeystroke, Keystroke, Unbind, is_no_action, is_unbind};
+use crate::{Action, AsKeystroke, Keystroke, Modifiers, Unbind, is_no_action, is_unbind};
 use collections::{HashSet, TypeIdHashMap};
 use smallvec::SmallVec;
 
@@ -38,8 +38,18 @@ fn disabled_binding_matches_context(disabled_binding: &KeyBinding, binding: &Key
     }
 }
 
+/// A binding's keystrokes with Shift folded into symbol keys, as matching reads them, so
+/// `ctrl-shift-\` and `ctrl-|` compare and hash alike.
+fn folded_keystrokes(binding: &KeyBinding) -> SmallVec<[(Modifiers, &str, Option<&str>); 2]> {
+    binding
+        .keystrokes
+        .iter()
+        .map(|keystroke| keystroke.inner().folded())
+        .collect()
+}
+
 fn binding_is_unbound(disabled_binding: &KeyBinding, binding: &KeyBinding) -> bool {
-    disabled_binding.keystrokes == binding.keystrokes
+    folded_keystrokes(disabled_binding) == folded_keystrokes(binding)
         && disabled_binding
             .action()
             .as_any()
@@ -113,7 +123,7 @@ impl Keymap {
             for disabled_ix in &self.disabled_binding_indices {
                 if disabled_ix > ix {
                     let disabled_binding = &self.bindings[*disabled_ix];
-                    if disabled_binding.keystrokes != binding.keystrokes {
+                    if folded_keystrokes(disabled_binding) != folded_keystrokes(binding) {
                         continue;
                     }
 
@@ -262,10 +272,10 @@ impl Keymap {
                 continue;
             }
             if is_no_action(&*binding.action) || is_unbind(&*binding.action) {
-                pending.remove(&&binding.keystrokes);
+                pending.remove(&folded_keystrokes(binding));
                 continue;
             }
-            pending.insert(&binding.keystrokes);
+            pending.insert(folded_keystrokes(binding));
         }
 
         (bindings, !pending.is_empty())
@@ -1269,24 +1279,68 @@ mod tests {
         }
     }
 
+    /// `null` and `Unbind` of `ActionAlpha`, which disable the same bindings.
+    fn disabling(keystrokes: &str) -> [KeyBinding; 2] {
+        [
+            KeyBinding::new(keystrokes, NoAction {}, None),
+            KeyBinding::new(keystrokes, Unbind("test_only::ActionAlpha".into()), None),
+        ]
+    }
+
     #[test]
-    fn test_unbind_removes_a_binding_spelled_the_same() {
-        // Unbind compares the keystrokes as written, unlike matching a keystroke.
-        for (bound, unbound, removed) in [
-            ("ctrl-shift-\\", "ctrl-shift-\\", true),
-            ("ctrl-|", "ctrl-|", true),
-            ("ctrl-shift-\\", "ctrl-|", false),
-            ("ctrl-|", "ctrl-shift-\\", false),
+    fn test_unbind_removes_a_binding_in_either_spelling() {
+        for (bound, unbound) in [
+            ("ctrl-shift-\\", "ctrl-shift-\\"),
+            ("ctrl-|", "ctrl-|"),
+            ("ctrl-shift-\\", "ctrl-|"),
+            ("ctrl-|", "ctrl-shift-\\"),
         ] {
             let keymap = Keymap::new(vec![
                 KeyBinding::new(bound, ActionAlpha {}, None),
                 KeyBinding::new(unbound, Unbind("test_only::ActionAlpha".into()), None),
             ]);
-            assert_eq!(
+            assert!(
                 dispatched(&keymap, &["ctrl-|"], &[]).is_empty(),
-                removed,
                 "{bound} unbound by {unbound}"
             );
+        }
+    }
+
+    #[test]
+    fn test_a_pending_sequence_is_disabled_by_either_spelling() {
+        for (bound, disabled) in [
+            ("ctrl-shift-\\ a", "ctrl-| a"),
+            ("ctrl-| a", "ctrl-shift-\\ a"),
+        ] {
+            for disabling in disabling(disabled) {
+                let keymap = Keymap::new(vec![
+                    KeyBinding::new(bound, ActionAlpha {}, None),
+                    disabling,
+                ]);
+                let (bindings, pending) = keymap.bindings_for_input(&[typed("ctrl-|")], &[]);
+                assert!(bindings.is_empty());
+                assert!(!pending, "{bound} disabled by {disabled}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_bindings_for_action_skips_a_binding_disabled_in_either_spelling() {
+        for (bound, disabled) in [
+            ("ctrl-shift-\\", "ctrl-|"),
+            ("ctrl-|", "ctrl-shift-\\"),
+            ("ctrl-k ctrl-shift-\\", "ctrl-k ctrl-|"),
+        ] {
+            for disabling in disabling(disabled) {
+                let keymap = Keymap::new(vec![
+                    KeyBinding::new(bound, ActionAlpha {}, None),
+                    disabling,
+                ]);
+                assert!(
+                    keymap.bindings_for_action(&ActionAlpha {}).next().is_none(),
+                    "{bound} disabled by {disabled}"
+                );
+            }
         }
     }
 
