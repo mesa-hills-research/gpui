@@ -5,6 +5,17 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## Unreleased
+
+### Keyboard
+
+- `Window::observe_modifiers_changed` calls back after every change of the modifier keys or of Caps
+  Lock in a window, whatever has focus. Element handlers such as `on_modifiers_changed` hear a
+  change only along the focused element's path, which is the root alone while nothing has focus, so
+  an app that reacts to a held modifier, such as underlining menu access keys while Alt is down, had
+  to poll `Window::modifiers`. The callback runs after the elements have seen the change, even when
+  one of them stops it, and dropping the returned `Subscription` ends it.
+
 ## 0.1.4
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,

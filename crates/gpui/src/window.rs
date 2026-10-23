@@ -1438,6 +1438,8 @@ pub struct Window {
     pub(crate) focus_generation: u64,
     pending_input: Option<PendingInput>,
     pending_modifier: ModifierState,
+    pub(crate) modifiers_observers:
+        SubscriberSet<(), Box<dyn FnMut(&ModifiersChangedEvent, &mut Window, &mut App) -> bool>>,
     pub(crate) pending_input_observers: SubscriberSet<(), AnyObserver>,
     prompt: Option<RenderablePromptHandle>,
     pub(crate) client_inset: Option<Pixels>,
@@ -2338,6 +2340,7 @@ impl Window {
             focus_generation: 0,
             pending_input: None,
             pending_modifier: ModifierState::default(),
+            modifiers_observers: SubscriberSet::new(),
             pending_input_observers: SubscriberSet::new(),
             prompt: None,
             client_inset: None,
@@ -2482,6 +2485,30 @@ impl Window {
             (),
             Box::new(move |window, cx| {
                 callback(window, cx);
+                true
+            }),
+        );
+        activate();
+        subscription
+    }
+
+    /// Registers a callback to be invoked after every change of the modifier keys or of Caps Lock
+    /// in the window, whatever has focus.
+    ///
+    /// Element handlers such as [`Window::on_modifiers_changed`] hear a change only along the
+    /// dispatch path of the focused element, which is the root alone while nothing has focus, and
+    /// a handler that stops propagation hides the change from the elements beyond it. An observer
+    /// hears every change after the elements do, and [`Window::modifiers`] already holds the new
+    /// state. It sees changes that arrive as modifier events, not the modifiers that mouse events
+    /// carry. The observer lasts until the returned [`Subscription`] is dropped.
+    pub fn observe_modifiers_changed(
+        &self,
+        mut callback: impl FnMut(&ModifiersChangedEvent, &mut Window, &mut App) + 'static,
+    ) -> Subscription {
+        let (subscription, activate) = self.modifiers_observers.insert(
+            (),
+            Box::new(move |event, window, cx| {
+                callback(event, window, cx);
                 true
             }),
         );
@@ -5952,6 +5979,11 @@ impl Window {
         } else if let Some(touch_event) = event.touch_event() {
             self.dispatch_touch_event(touch_event, cx);
         }
+        if let PlatformInput::ModifiersChanged(modifiers_changed) = &event {
+            self.modifiers_observers
+                .clone()
+                .retain(&(), |callback| callback(modifiers_changed, self, cx));
+        }
         if let PlatformInput::LongPress(long_press) = &event {
             match long_press.phase {
                 crate::TouchPhase::Started if !self.default_prevented => {
@@ -8095,8 +8127,8 @@ mod tests {
         AnyWindowHandle, AppContext as _, Bounds, ContentMask, Context, DispatchPhase,
         DragMoveEvent, Empty, ExternalDragPayload, ExternalPaths, FileDragPaths, FileDropEvent,
         FocusHandle, InputEvent as _, InteractiveElement as _, IntoElement, KeyDownEvent,
-        Keystroke, LongPressEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement,
-        Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
+        Keystroke, LongPressEvent, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent,
+        ParentElement, Pixels, PlatformInput, Point, Render, RequestFrameOptions, ScaledPixels,
         StatefulInteractiveElement as _, Styled, TestAppContext, TouchDragEvent, TouchEvent,
         TouchId, TouchPhase, Underline, UnderlineStyle, Window, WindowAppearance, WindowOptions,
         canvas, div, hsla, point, px, size,
@@ -8610,6 +8642,59 @@ mod tests {
         cx.run_until_parked();
 
         assert_eq!(observed_appearance.get(), Some(WindowAppearance::Dark));
+    }
+
+    /// Element handlers hear a modifier change along the focused path only, so
+    /// an observer is how a window hears it while nothing has focus.
+    #[gpui::test]
+    fn modifiers_observers_hear_changes_whatever_has_focus(cx: &mut TestAppContext) {
+        struct Pad {
+            focus: FocusHandle,
+            heard: Rc<Cell<usize>>,
+        }
+
+        impl Render for Pad {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                let heard = self.heard.clone();
+                div()
+                    .size_full()
+                    .track_focus(&self.focus)
+                    .on_modifiers_changed(move |_, _, cx| {
+                        heard.set(heard.get() + 1);
+                        cx.stop_propagation();
+                    })
+            }
+        }
+
+        let heard_by_element = Rc::new(Cell::new(0));
+        let (pad, cx) = cx.add_window_view({
+            let heard = heard_by_element.clone();
+            move |_, cx| Pad {
+                focus: cx.focus_handle(),
+                heard,
+            }
+        });
+        let observed = Rc::new(RefCell::new(Vec::new()));
+        let subscription = cx.update(|window, _| {
+            let observed = observed.clone();
+            window.observe_modifiers_changed(move |event, window, _| {
+                assert_eq!(window.modifiers(), event.modifiers);
+                observed.borrow_mut().push(event.modifiers);
+            })
+        });
+
+        cx.simulate_modifiers_change(Modifiers::alt());
+        assert_eq!(*observed.borrow(), [Modifiers::alt()]);
+        assert_eq!(heard_by_element.get(), 0, "nothing has focus");
+
+        pad.update_in(cx, |pad, window, cx| window.focus(&pad.focus, cx));
+        cx.simulate_modifiers_change(Modifiers::none());
+        assert_eq!(*observed.borrow(), [Modifiers::alt(), Modifiers::none()]);
+        assert_eq!(heard_by_element.get(), 1, "the element stops the change");
+
+        drop(subscription);
+        cx.simulate_modifiers_change(Modifiers::shift());
+        assert_eq!(observed.borrow().len(), 2);
     }
 
     #[gpui::test]
