@@ -86,3 +86,7 @@ The gpui crates are Apache-2.0, like Zed's gpui. Each carries `LICENSE-APACHE`, 
 the release tooling rewrites or this fork changes say so in their first line. `mhr-gpui-mobile`
 keeps upstream's choice of GPL-3.0-or-later, AGPL-3.0-or-later or Apache-2.0. `LICENSE-GPL` at the
 root comes over from Zed's root with the release tooling and applies to none of the gpui crates.
+
+`assets/fonts` holds IBM Plex Sans and Lilex, which some tests include. They are under the
+SIL Open Font License 1.1 (see the licence files beside them), and no published crate contains
+them.

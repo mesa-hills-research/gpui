@@ -73,3 +73,8 @@ uuid = { workspace = true }
 
 [lints]
 workspace = true
+
+# The tests use `cfg(test)` code that needs these features.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+gpui_apple = { workspace = true, features = ["test-support"] }

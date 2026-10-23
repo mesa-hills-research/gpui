@@ -110,3 +110,8 @@ web-sys = { version = "0.3", features = [
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+anyhow = { workspace = true }
+gpui = { workspace = true }
+smallvec = { workspace = true }

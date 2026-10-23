@@ -58,3 +58,9 @@ workspace = true
 [[bench]]
 name = "layout_line"
 harness = false
+
+[dev-dependencies]
+criterion = { workspace = true }
+gpui = { workspace = true, features = ["test-support"] }
+image = { workspace = true }
+naga = { version = "29.0.4", features = ["wgsl-in"] }

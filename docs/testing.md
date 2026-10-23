@@ -3,21 +3,22 @@
 ## What runs here
 
 - `cargo check --workspace` covers every library.
-- `cargo test -p mhr-gpui-mobile` runs the mobile crate's unit tests.
+- `cargo test --workspace --tests` runs the tests of every crate, those of the gpui crates and the
+  mobile crate included. `mhr-gpui-macos` has tests only on a Mac.
 - `cargo test -p mhr-gpui-screenshot` runs the screenshot harness's tests and its goldens of
   plain GPUI elements, on Linux.
-- CI runs clippy and the tests of every crate whose tests build, on Linux, Windows and macOS.
-  [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) has the commands and the crates it
-  leaves out.
+- CI runs clippy and all of those tests on Linux, Windows and macOS.
+  [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) has the commands.
 - The suite of the [GPUI Kit fork](https://github.com/mesa-hills-research/gpui_kit), about 2,650
   tests, exercises the gpui crates through GPUI Kit. Run it from a checkout of the kit whose
   `[patch.crates-io]` points at this one.
 
-The tests of `mhr-gpui` and six other gpui crates, and the gpui crates' examples and benchmarks,
-don't build here. The release tooling leaves out their `[dev-dependencies]`, and several read
-fonts from Zed's `assets/` folder, which the snapshot doesn't include. Running them would mean
-restoring both, which is future work. Until then, a change to gpui itself can be tested in a Zed
-checkout at the snapshot's revision.
+The tests of some crates include IBM Plex Sans and Lilex from `assets/fonts` at the root, under the
+SIL Open Font License that sits beside them. No published crate holds them. The release tooling
+leaves out every crate's `[dev-dependencies]`, so the crates whose tests need some have them again.
+The gpui crates' examples and benchmarks still don't build here, since they read more of Zed's fonts
+and dev-dependencies. A change to gpui itself can be tried in a Zed checkout at the snapshot's
+revision.
 
 ## Headless screenshots on Linux
 
