@@ -11,7 +11,7 @@ use anyhow::Result;
 use gpui::{
     Bounds, DevicePixels, Font, FontId, FontMetrics, FontRun, GlyphId, LineLayout, Pixels,
     PlatformTextSystem, RenderGlyphParams, SharedString, Size, TextRenderingMode, TextRun,
-    TextSystem, WindowTextSystem, font, hsla, px,
+    TextSystem, WindowTextSystem, WrappedLine, font, hsla, px,
 };
 use gpui_screenshot::{MONO_FAMILY, SANS_FAMILY, bundled_fonts};
 #[cfg(target_os = "linux")]
@@ -135,9 +135,14 @@ impl Pair {
         Self::new(platform)
     }
 
-    /// Whether the text system lays out long lines in segments.
+    /// Whether the text system lays out long lines in segments. If it doesn't, a test has nothing
+    /// to compare and says so.
     fn segments(&self) -> bool {
-        self.segmented.shapes_words_independently()
+        let segments = self.segmented.shapes_words_independently();
+        if !segments {
+            eprintln!("skipped, the text system lays out every line whole");
+        }
+        segments
     }
 
     /// The proportional families the tests lay text out in, which are the bundled one and those
@@ -179,6 +184,10 @@ fn advance_tolerance(width: Pixels) -> f32 {
 /// A position can differ by this part of its distance from the start of the line.
 const RELATIVE_TOLERANCE: f32 = 3e-5;
 
+/// The vertical position of a glyph differs by float noise between a layout and the same text in
+/// segments, a few millionths of a pixel, where a different baseline would differ by much more.
+const Y_TOLERANCE: f32 = 1e-4;
+
 fn compare(whole: &LineLayout, segmented: &LineLayout, context: &str) -> Difference {
     let mut difference = Difference::default();
     assert_eq!(whole.font_size, segmented.font_size, "{context}");
@@ -201,6 +210,14 @@ fn compare(whole: &LineLayout, segmented: &LineLayout, context: &str) -> Differe
     };
     let (whole_glyphs, segmented_glyphs) = (glyphs(whole), glyphs(segmented));
     assert_eq!(whole_glyphs.len(), segmented_glyphs.len(), "{context}");
+    // The Linux text system splits runs where a font changes, so the runs match too.
+    #[cfg(target_os = "linux")]
+    {
+        assert_eq!(whole.runs.len(), segmented.runs.len(), "{context}");
+        for (a, b) in whole.runs.iter().zip(&segmented.runs) {
+            assert_eq!(a.glyphs.len(), b.glyphs.len(), "{context}");
+        }
+    }
     let mut previous = None::<(f32, f32)>;
     let mut advance = 0f32;
     for ((whole_font, a), (segmented_font, b)) in whole_glyphs.iter().zip(&segmented_glyphs) {
@@ -208,7 +225,12 @@ fn compare(whole: &LineLayout, segmented: &LineLayout, context: &str) -> Differe
         assert_eq!(a.id, b.id, "{context}");
         assert_eq!(a.index, b.index, "{context}");
         assert_eq!(a.is_emoji, b.is_emoji, "{context}");
-        assert_eq!(a.position.y, b.position.y, "{context}");
+        assert!(
+            (f32::from(a.position.y) - f32::from(b.position.y)).abs() <= Y_TOLERANCE,
+            "{context}: y {:?} and {:?}",
+            a.position.y,
+            b.position.y
+        );
         relative(a.position.x, b.position.x);
         let (a, b) = (f32::from(a.position.x), f32::from(b.position.x));
         if let Some((previous_a, previous_b)) = previous {
@@ -538,6 +560,19 @@ fn kerning_next_to_a_space_does_not_move_a_segment() {
     assert_eq!(failures, 0, "{failures} layouts differ");
 }
 
+/// Where a line wraps, as the number of glyphs before each wrap. A boundary names its run, and
+/// which run a glyph is in depends on how the text system splits runs.
+fn wrap_points(line: &WrappedLine) -> Vec<usize> {
+    let runs = &line.unwrapped_layout.runs;
+    line.wrap_boundaries
+        .iter()
+        .map(|boundary| {
+            let before = runs[..boundary.run_ix].iter();
+            before.map(|run| run.glyphs.len()).sum::<usize>() + boundary.glyph_ix
+        })
+        .collect()
+}
+
 #[test]
 fn a_wrapped_paragraph_wraps_where_the_whole_line_does() {
     let pair = Pair::with_system_fonts();
@@ -559,7 +594,8 @@ fn a_wrapped_paragraph_wraps_where_the_whole_line_does() {
             assert_eq!(whole.len(), segmented.len());
             for (whole, segmented) in whole.iter().zip(&segmented) {
                 assert_eq!(
-                    whole.wrap_boundaries, segmented.wrap_boundaries,
+                    wrap_points(whole),
+                    wrap_points(segmented),
                     "{}, wrapped to {wrap_width}",
                     sample.name
                 );
