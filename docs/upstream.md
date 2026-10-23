@@ -296,6 +296,17 @@ adds the same line.
   and French and Czech keyboards send the digit for Ctrl+Shift+1. An app binds the symbol such a
   layout sends, and `ctrl-shift-1` can't match on a French or Czech one. The tests at the end of
   `keystroke.rs`, `keymap.rs` and `key_dispatch.rs` cover it.
+- **Tests that build**, in the `Cargo.toml` of `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-web`,
+  `mhr-gpui-macos`, `mhr-gpui-macros`, `mhr-sum-tree` and `mhr-zlog`, and in `mhr-gpui`'s
+  `src/randomized_element_tree.rs`. The release tooling leaves out `[dev-dependencies]`, so these
+  crates' tests didn't build. Each crate has the dev-dependencies its tests use again, as in Zed.
+  `mhr-gpui-macros` takes `gpui` by path without a version, so its published manifest leaves it
+  out and a new `mhr-gpui` never forces a new `mhr-gpui-macros`. The workspace's `assets/fonts`
+  holds the three fonts of Zed's `assets/fonts` that tests include (IBM Plex Sans Regular and Lilex
+  Regular and Bold) with their licences. They sit outside every crate, so no package holds them.
+  Proptest 1 from crates.io can't expand `#[gpui::property_test]` where Zed's git revision of
+  proptest can, so `randomized_element_tree_matches_full_render` is a `#[gpui::test]` that runs the
+  same body for four seeds.
 
 ## The mobile crate
 

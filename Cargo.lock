@@ -3517,6 +3517,7 @@ name = "mhr-gpui-macros"
 version = "0.1.0"
 dependencies = [
  "heck 0.5.0",
+ "mhr-gpui",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
@@ -3646,6 +3647,7 @@ dependencies = [
  "anyhow",
  "bytemuck",
  "cosmic-text",
+ "criterion",
  "etagere",
  "image",
  "itertools 0.14.0",
@@ -3653,6 +3655,7 @@ dependencies = [
  "mhr-collections",
  "mhr-gpui",
  "mhr-gpui-util",
+ "naga",
  "parking_lot",
  "profiling",
  "raw-window-handle",
@@ -3774,10 +3777,13 @@ dependencies = [
 name = "mhr-sum-tree"
 version = "0.1.0"
 dependencies = [
+ "ctor",
  "heapless",
  "log",
+ "mhr-zlog",
  "mhr-ztracing",
  "proptest",
+ "rand 0.9.4",
  "rayon",
  "tracing",
 ]
@@ -3799,6 +3805,7 @@ dependencies = [
  "chrono",
  "log",
  "mhr-collections",
+ "tempfile",
 ]
 
 [[package]]
