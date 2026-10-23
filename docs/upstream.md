@@ -346,6 +346,14 @@ adds the same line.
   `Window::dispatch_event` calls after every `ModifiersChanged` event, once the elements have seen
   it and even if one of them stopped it. `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui`
   follows it. A test in `window.rs` covers it.
+- **GPUI Kit under its crates.io name**, in `mhr-gpui-macros`' `src/gpui_pre_facade_paths.rs`.
+  When an app depends on GPUI Kit, the macros point their `gpui::` paths at it. They looked for the
+  package `gpui-kit` alone, so an app that depends on `mhr-gpui-kit` got paths to a `gpui` it
+  doesn't have. They try `mhr-gpui-kit` first and `gpui-kit` second. The library of `mhr-gpui-kit`
+  is still `gpui_kit`, and an app that depends on it without a rename imports it by that name, so
+  the macros use it where proc-macro-crate returns the key `mhr_gpui_kit`. `test = false` is gone
+  from the crate's `Cargo.toml`, so its unit tests run, and one of them reads the manifests of
+  made-up apps.
 
 ## The mobile crate
 

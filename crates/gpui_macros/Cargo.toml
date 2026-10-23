@@ -20,7 +20,6 @@ zed-rev = "279fe070bb389b79652e52065b2f001edcc0b11b"
 path = "src/gpui_macros.rs"
 proc-macro = true
 doctest = true
-test = false
 name = "gpui_macros"
 
 [features]
