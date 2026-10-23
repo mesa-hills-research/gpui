@@ -215,10 +215,6 @@ impl PlatformTextSystem for MacTextSystem {
         self.0.write().layout_line(text, font_size, font_runs)
     }
 
-    fn shapes_words_independently(&self) -> bool {
-        true
-    }
-
     fn recommended_rendering_mode(
         &self,
         _font_id: FontId,

@@ -40,8 +40,7 @@ detail.
 - DirectWrite shapes a long line in segments on Windows, as the cosmic-text system does on Linux and
   Android. A paragraph that grows or changes by a word shapes the segment it touches and takes the
   rest from the cache, instead of shaping the whole paragraph again. Lines under 1 KB, lines with
-  right-to-left text, tabs or control characters, and lines on the web are shaped whole.
-- CoreText shapes a long line in segments on macOS in the same way.
+  right-to-left text, tabs or control characters, and lines on macOS and the web are shaped whole.
 
 ### Test support
 
