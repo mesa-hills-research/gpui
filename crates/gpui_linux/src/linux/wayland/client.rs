@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use std::{
     cell::{RefCell, RefMut},
     hash::Hash,
@@ -85,10 +86,11 @@ use super::{
 };
 
 use crate::linux::{
-    DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, PIPE_READ_TIMEOUT, SCROLL_LINES,
-    capslock_from_xkb, cursor_style_to_icon_names, get_xkb_compose_state, is_within_click_distance,
-    keystroke_from_xkb, keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context,
-    open_uri_internal, read_fd_with_timeout, reveal_path_internal,
+    DOUBLE_CLICK_INTERVAL, LinuxCommon, LinuxKeyboardLayout, LinuxKeyboardMapper,
+    PIPE_READ_TIMEOUT, SCROLL_LINES, capslock_from_xkb, cursor_style_to_icon_names,
+    get_xkb_compose_state, is_within_click_distance, keystroke_from_xkb,
+    keystroke_underlying_dead_key, modifiers_from_xkb, new_xkb_context, open_uri_internal,
+    read_fd_with_timeout, reveal_path_internal,
     wayland::{
         clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPES},
         cursor::Cursor,
@@ -99,13 +101,13 @@ use crate::linux::{
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
 use gpui::{
-    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, ExternalDragPayload,
-    FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment, KeyDownEvent,
-    KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point, ScrollDelta,
-    ScrollWheelEvent, SharedString, Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams,
-    point, px, size,
+    AnyWindowHandle, Bounds, Capslock, CursorStyle, DevicePixels, DummyKeyboardMapper,
+    ExternalDragPayload, FileDragPaths, FileDropEvent, ForegroundExecutor, GraphicalEnvironment,
+    KeyDownEvent, KeyUpEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, NavigationDirection, Pixels,
+    PlatformDisplay, PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout,
+    PlatformKeyboardMapper, PlatformWindow, Point, ScrollDelta, ScrollWheelEvent, SharedString,
+    Size, TouchPhase, WindowButtonLayout, WindowKind, WindowParams, point, px, size,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
@@ -1188,6 +1190,13 @@ impl WaylandConnection {
 impl WaylandConnection {
     pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         Box::new(self.0.borrow().keyboard_layout.clone())
+    }
+
+    pub(crate) fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        match &self.0.borrow().keymap_state {
+            Some(keymap_state) => Rc::new(LinuxKeyboardMapper::new(keymap_state)),
+            None => Rc::new(DummyKeyboardMapper),
+        }
     }
 
     pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

@@ -1,8 +1,10 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use std::{path::PathBuf, rc::Rc};
 
 use gpui::{
-    AnyWindowHandle, ClipboardItem, CursorStyle, GraphicalEnvironment, PlatformDisplay,
-    PlatformKeyboardLayout, PlatformWindow, WindowParams, WindowingModes,
+    AnyWindowHandle, ClipboardItem, CursorStyle, DummyKeyboardMapper, GraphicalEnvironment,
+    PlatformDisplay, PlatformKeyboardLayout, PlatformKeyboardMapper, PlatformWindow, WindowParams,
+    WindowingModes,
 };
 
 #[cfg(feature = "wayland")]
@@ -119,6 +121,14 @@ impl DisplayConnection {
             self,
             connection => connection.keyboard_layout(),
             headless => Box::new(LinuxKeyboardLayout::new("unknown".into()))
+        )
+    }
+
+    pub(crate) fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        dispatch!(
+            self,
+            connection => connection.keyboard_mapper(),
+            headless => Rc::new(DummyKeyboardMapper)
         )
     }
 

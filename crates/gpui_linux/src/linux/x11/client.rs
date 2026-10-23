@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use anyhow::{Context as _, anyhow};
 use ashpd::WindowIdentifier;
 use calloop::{
@@ -56,14 +57,16 @@ use crate::linux::{
     reveal_path_internal,
     xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
 };
-use crate::linux::{LinuxCommon, LinuxKeyboardLayout, X11Window, modifiers_from_xinput_info};
+use crate::linux::{
+    LinuxCommon, LinuxKeyboardLayout, LinuxKeyboardMapper, X11Window, modifiers_from_xinput_info,
+};
 
 use gpui::{
     AnyWindowHandle, Bounds, ClipboardItem, CursorStyle, FileDropEvent, FrameRequestSource,
     Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels, PlatformDisplay,
-    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformWindow, Point,
-    RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout, WindowParams,
-    WindowVisibility, point, px,
+    PlatformFrameSignal, PlatformInput, PlatformKeyboardLayout, PlatformKeyboardMapper,
+    PlatformWindow, Point, RequestFrameOptions, ScrollDelta, Size, TouchPhase, WindowButtonLayout,
+    WindowParams, WindowVisibility, point, px,
 };
 use gpui_wgpu::{CompositorGpuHint, GpuContext};
 
@@ -1640,6 +1643,10 @@ impl X11Client {
     pub(crate) fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout> {
         let state = self.0.borrow();
         Box::new(state.keyboard_layout.clone())
+    }
+
+    pub(crate) fn keyboard_mapper(&self) -> Rc<dyn PlatformKeyboardMapper> {
+        Rc::new(LinuxKeyboardMapper::new(&self.0.borrow().xkb))
     }
 
     pub(crate) fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {

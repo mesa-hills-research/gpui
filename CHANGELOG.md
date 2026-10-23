@@ -15,6 +15,14 @@ detail.
   `ctrl-shift-\` in place. `bindings_for_action` kept showing a shortcut that `null` or `Unbind`
   had disabled in the other spelling, and a sequence disabled in the other spelling still waited
   for its next key. A chord can be written either way throughout a keymap.
+- On Linux, a keymap loaded with `KeyBinding::load` and `cx.keyboard_mapper()` reads Shift on a
+  symbol key the way the active layout types it, on X11 and Wayland. The platform returned the dummy
+  mapper, so `ctrl-shift-7` meant Ctrl+& on every layout and never fired on a German keyboard, where
+  Shift+7 types `/`. The new mapper reads the 21 symbol keys of a US keyboard, and the ISO key left
+  of Z, from the xkb layout in use, as the Windows mapper does. A binding that the US reading
+  already gets right stays as written, so a US layout and the way a binding shows are unchanged.
+  `use_key_equivalents` has no effect on Linux. macOS keeps its mapper, which only remaps key
+  equivalents.
 
 ### Keyboard
 

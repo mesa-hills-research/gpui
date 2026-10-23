@@ -45,7 +45,10 @@ impl KeyBinding {
     /// Shift on a key means the symbol a US keyboard types. `ctrl-shift-2` is Ctrl+@, which a UK
     /// keyboard types with Shift+', and the chord on its Shift+2 types `"` and needs `ctrl-"`.
     /// Layouts that type digits with Shift, such as a French one, send the digit, so
-    /// `ctrl-shift-1` never matches there.
+    /// `ctrl-shift-1` never matches there. [`KeyBinding::load`] with
+    /// [`App::keyboard_mapper`](crate::App::keyboard_mapper) reads the active layout instead on
+    /// Windows and Linux, so `ctrl-shift-2` is Ctrl+Shift+2 on a UK keyboard and `ctrl-shift-1`
+    /// matches on a French one.
     pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
         let context_predicate =
             context.map(|context| KeyBindingContextPredicate::parse(context).unwrap().into());
