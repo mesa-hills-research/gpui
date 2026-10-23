@@ -302,7 +302,7 @@ impl<E: IntoElement + 'static> Element for SpringAnimationElement<E> {
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
-            let now = Instant::now();
+            let now = window.frame_time().now;
             let initial = self.initial.unwrap_or(self.target);
             let mut state = state.unwrap_or_else(|| SpringElementState {
                 spring: SpringState {
@@ -949,7 +949,9 @@ mod tests {
         cx.executor().advance_clock(Duration::from_millis(50));
         assert!(simulate_next_frame(&window, cx) > 0);
         let value_before_retargeting = *rendered_values.borrow().last().unwrap();
-        assert!(value_before_retargeting > px(0.0));
+        // 50 ms of simulated time moves the spring by about 12 px. A spring that reads the real
+        // clock moves by well under a pixel, or not at all if the frame is quick.
+        assert!(value_before_retargeting > px(1.0));
         assert!(value_before_retargeting < px(100.0));
 
         window
