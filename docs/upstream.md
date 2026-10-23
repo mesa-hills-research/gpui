@@ -307,6 +307,12 @@ adds the same line.
   Proptest 1 from crates.io can't expand `#[gpui::property_test]` where Zed's git revision of
   proptest can, so `randomized_element_tree_matches_full_render` is a `#[gpui::test]` that runs the
   same body for four seeds.
+- **Modifier observers**, in `mhr-gpui`'s `src/window.rs`. A modifier change goes to the handlers
+  on the focused element's dispatch path, which is the root node alone while nothing has focus, so
+  an element never hears it then. `Window::observe_modifiers_changed` registers a callback that
+  `Window::dispatch_event` calls after every `ModifiersChanged` event, once the elements have seen
+  it and even if one of them stopped it. `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui`
+  follows it. The test at the end of `window.rs` covers it.
 
 ## The mobile crate
 
