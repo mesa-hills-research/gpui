@@ -16,7 +16,7 @@ GPUI Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
 |---|---|---|
 | `mhr-gpui` and 24 sibling crates (`crates/`, `tooling/perf`) | gpui-pre 0.3.8 | Published. Unchanged apart from their names and [a few changes](docs/upstream.md#changes-to-the-gpui-crates), such as a fix for variable font weights on Linux and Android, recent files in Windows jump lists, throttled animations that share frames, list scrollbars that hold steady over rows not drawn yet, cached views that stay cached inside other cached views and keep their accessibility nodes, paint animations that don't redraw the view they are in, long lines shaped in cached segments on Linux and Android, key bindings with Shift on a symbol key that match on every platform, and test support for screenshot tests |
 | `mhr-gpui-mobile` (`crates/gpui_mobile`) | [longbridge/gpui-mobile](https://github.com/longbridge/gpui-mobile) `9075e3a`, moved from gpui-pre 0.3.7 to 0.3.8 | Experimental and unpublished, see [Mobile](#mobile) |
-| `mhr-gpui-screenshot` (`crates/gpui_screenshot`) | This fork | Golden-image tests for GPUI views, unpublished, see [Screenshot tests](#screenshot-tests) |
+| `mhr-gpui-screenshot` (`crates/gpui_screenshot`) | This fork | Published. Golden-image tests for GPUI views, see [Screenshot tests](#screenshot-tests) |
 | `mhr-gpui-scroll-harness` (`crates/gpui_scroll_harness`) | This fork | Measures and films how smoothly a list's scrollbar moves, unpublished, see its [README](crates/gpui_scroll_harness/README.md) |
 
 ## Using it
@@ -89,4 +89,5 @@ root comes over from Zed's root with the release tooling and applies to none of 
 
 `assets/fonts` holds IBM Plex Sans and Lilex, which some tests include. They are under the
 SIL Open Font License 1.1 (see the licence files beside them), and no published crate contains
-them.
+them. `mhr-gpui-screenshot` bundles Roboto under the same license and DejaVu Sans Mono under the
+Bitstream Vera license, with their licence files in `crates/gpui_screenshot/fonts`.

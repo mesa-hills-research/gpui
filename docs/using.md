@@ -55,9 +55,9 @@ build of reqwest, stays, since `mhr-reqwest-client` uses it too.
 | `mhr-ztracing` | `gpui-pre-ztracing` | `crates/ztracing` |
 | `mhr-ztracing-macro` | `gpui-pre-ztracing-macro` | `crates/ztracing_macro` |
 
-`mhr-gpui-mobile` (`crates/gpui_mobile`), `mhr-gpui-screenshot` (`crates/gpui_screenshot`) and
-`mhr-gpui-scroll-harness` (`crates/gpui_scroll_harness`) are unpublished, so an app takes them
-from git.
+`mhr-gpui-mobile` (`crates/gpui_mobile`) and `mhr-gpui-scroll-harness`
+(`crates/gpui_scroll_harness`) are unpublished, so an app takes them from git.
+`mhr-gpui-screenshot` (`crates/gpui_screenshot`) is published and has no gpui-pre counterpart.
 
 ## From git or a local checkout
 

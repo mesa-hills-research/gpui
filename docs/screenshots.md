@@ -18,6 +18,13 @@ can round differently at anti-aliased edges.
 
 ## Writing a test
 
+Add the crate as a dev-dependency, with its library name:
+
+```toml
+[dev-dependencies]
+gpui_screenshot = { package = "mhr-gpui-screenshot", version = "0.1" }
+```
+
 `ScreenshotApp` is a headless app with the bundled fonts and a software renderer. Open a window
 at a logical size and a scale factor, capture it, and compare the capture with its golden:
 

@@ -2,9 +2,15 @@
 name = "mhr-gpui-screenshot"
 version = "0.1.0"
 edition = { workspace = true }
-publish = false
-license = "Apache-2.0"
-description = "Golden-image screenshot tests for GPUI views, rendered headlessly on Linux"
+publish = true
+# The code is Apache-2.0. The bundled fonts keep the licences in fonts/.
+license = "Apache-2.0 AND OFL-1.1 AND Bitstream-Vera"
+description = "Golden-image screenshot tests for GPUI views, rendered headlessly on Linux, for mhr-gpui"
+repository = { workspace = true }
+rust-version = { workspace = true }
+readme = "README.md"
+keywords = ["gpui", "screenshot", "testing", "golden", "snapshot"]
+categories = ["gui", "development-tools::testing"]
 
 [lib]
 path = "src/gpui_screenshot.rs"
