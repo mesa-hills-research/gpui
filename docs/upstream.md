@@ -325,10 +325,11 @@ adds the same line.
   tests in `keyboard_mapper.rs` compile keymaps for `us`, `de` and `fr` from names, with no display.
   The mapping happens in `KeyBinding::load`, so a binding keeps the keys it was loaded with after a
   layout change, and an app loads its keymap again from `App::on_keyboard_layout_change`.
-- **Tests that build**, in the `Cargo.toml` of `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-web`,
-  `mhr-gpui-macos`, `mhr-gpui-macros`, `mhr-sum-tree` and `mhr-zlog`, and in `mhr-gpui`'s
-  `src/randomized_element_tree.rs`. The release tooling leaves out `[dev-dependencies]`, so these
-  crates' tests didn't build. Each crate has the dev-dependencies its tests use again, as in Zed.
+- **Tests and examples that build**, in the `Cargo.toml` of `mhr-gpui`, `mhr-gpui-wgpu`,
+  `mhr-gpui-web`, `mhr-gpui-macos`, `mhr-gpui-macros`, `mhr-sum-tree` and `mhr-zlog`, and in
+  `mhr-gpui`'s `src/randomized_element_tree.rs`. The release tooling leaves out
+  `[dev-dependencies]`, so these crates' tests didn't build. Each crate has the dev-dependencies its
+  tests use again, as in Zed.
   `mhr-gpui-macros` takes `gpui` by path without a version, so its published manifest leaves it
   out and a new `mhr-gpui` never forces a new `mhr-gpui-macros`. The workspace's `assets/fonts`
   holds the three fonts of Zed's `assets/fonts` that tests include (IBM Plex Sans Regular and Lilex
@@ -336,6 +337,9 @@ adds the same line.
   Proptest 1 from crates.io can't expand `#[gpui::property_test]` where Zed's git revision of
   proptest can, so `randomized_element_tree_matches_full_render` is a `#[gpui::test]` that runs the
   same body for four seeds.
+  The examples of `mhr-gpui` build with Zed's dev-dependencies for them again (`env_logger`,
+  `lyon` with `extra`, `unicode-segmentation`, `mhr-gpui-platform` and `mhr-reqwest-client`). The
+  last two are by path without a version, so the published manifest leaves them out.
 - **Modifier observers**, in `mhr-gpui`'s `src/window.rs`. A modifier change goes to the handlers
   on the focused element's dispatch path, which is the root node alone while nothing has focus, so
   an element never hears it then. `Window::observe_modifiers_changed` registers a callback that

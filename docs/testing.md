@@ -16,9 +16,11 @@
 The tests of some crates include IBM Plex Sans and Lilex from `assets/fonts` at the root, under the
 SIL Open Font License that sits beside them. No published crate holds them. The release tooling
 leaves out every crate's `[dev-dependencies]`, so the crates whose tests need some have them again.
-The gpui crates' examples and benchmarks still don't build here, since they read more of Zed's fonts
-and dev-dependencies. A change to gpui itself can be tried in a Zed checkout at the snapshot's
-revision.
+`mhr-gpui`'s examples build too. They use `mhr-gpui-platform` and `mhr-reqwest-client` as
+dev-dependencies, by path without a version, so the published `mhr-gpui` leaves them out. A web
+build of the examples would need five more of Zed's fonts than `assets/fonts` holds. The two
+benchmarks of `mhr-gpui-platform`, behind `bench-support`, still don't build because they use
+`criterion` and `bench_metrics`.
 
 ## Headless screenshots on Linux
 
