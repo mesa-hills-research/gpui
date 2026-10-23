@@ -106,7 +106,12 @@ mod tests {
     // Looks up the facade from the `Cargo.toml` of a made-up package, as proc-macro-crate reads it
     // while that package compiles. `integration_test` is how cargo marks the build of a tests/ file.
     fn facade_of(manifest: &str, integration_test: bool) -> Option<FacadePath> {
-        let dir = std::env::temp_dir().join(format!("gpui-facade-{}", std::process::id()));
+        // Each call gets a folder of its own, because proc-macro-crate caches a manifest's answer by
+        // its path and modification time, and a rewrite within the same tick of a coarse file clock
+        // (as on Windows) would read as unchanged.
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("gpui-facade-{}-{call}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("Cargo.toml"), manifest).unwrap();
         // Safe, since this is the only test of the crate and nothing else reads the environment.
