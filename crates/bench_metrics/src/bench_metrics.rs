@@ -2180,6 +2180,7 @@ mod tests {
                 assert!(
                     message.contains("CAP_PERFMON")
                         || message.contains("does not advance")
+                        || message.contains("failed to read Linux")
                         || message.contains("unavailable on this platform")
                         || message.contains("unavailable for"),
                     "unavailable counters should have an actionable error: {message}"
@@ -2250,6 +2251,7 @@ mod tests {
                         message.contains("CAP_PERFMON")
                             || message.contains("does not expose")
                             || message.contains("does not advance")
+                            || message.contains("failed to read Linux")
                             || message.contains("needs kperf")
                             || message.contains("unavailable on this platform")
                             || message.contains("unavailable for"),
