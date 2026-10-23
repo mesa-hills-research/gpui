@@ -81,13 +81,13 @@ jobs:
             xcrun -sdk macosx metal --version
           fi
       # Clippy type-checks every crate it lints, so it stands in for
-      # `cargo check`.
+      # `cargo check`. `--all-targets` adds the tests, examples and benchmarks.
       - name: Clippy
-        run: cargo clippy --workspace --locked -- --deny warnings
-      # `--tests` leaves out the examples, which read more of Zed's fonts than
-      # `assets/` holds, and the doc tests, where mhr-gpui-mobile's are sketches
-      # that don't compile. `--no-fail-fast` runs the tests of every crate even
-      # after one fails, so one run shows every failure.
+        run: cargo clippy --workspace --all-targets --locked -- --deny warnings
+      # `--tests` leaves out the examples, which clippy builds, and the doc
+      # tests, where mhr-gpui-mobile's are sketches that don't compile.
+      # `--no-fail-fast` runs the tests of every crate even after one fails, so
+      # one run shows every failure.
       - name: Test
         run: cargo test --workspace --tests --locked --no-fail-fast
       - name: Upload screenshot failures

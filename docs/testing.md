@@ -2,7 +2,8 @@
 
 ## What runs here
 
-- `cargo check --workspace` covers every library.
+- `cargo check --workspace` covers every library, and `cargo clippy --workspace --all-targets` adds
+  the tests and examples.
 - `cargo test --workspace --tests` runs the tests of every crate, those of the gpui crates and the
   mobile crate included. `mhr-gpui-macos` has tests only on a Mac.
 - `cargo test -p mhr-gpui-screenshot` runs the screenshot harness's tests and its goldens of
