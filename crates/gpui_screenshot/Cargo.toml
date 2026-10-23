@@ -23,5 +23,11 @@ sha2 = { workspace = true }
 [dev-dependencies]
 swash = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+gpui_macos = { workspace = true, features = ["font-kit", "test-support"] }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+gpui_windows = { workspace = true, features = ["test-support"] }
+
 [lints]
 workspace = true

@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 #![cfg(target_os = "macos")]
 //! macOS platform implementation for GPUI.
 //!
@@ -53,6 +54,9 @@ pub(crate) use window::*;
 
 #[cfg(feature = "font-kit")]
 pub(crate) use text_system::*;
+
+#[cfg(all(feature = "font-kit", feature = "test-support"))]
+pub use text_system::MacTextSystem;
 
 pub use platform::MacPlatform;
 
