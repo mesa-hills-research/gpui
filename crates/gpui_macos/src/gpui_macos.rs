@@ -52,7 +52,8 @@ pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 pub(crate) use window::*;
 
-#[cfg(feature = "font-kit")]
+// `MacTextSystem` is the only public item of `text_system`, so each configuration imports it once.
+#[cfg(all(feature = "font-kit", not(feature = "test-support")))]
 pub(crate) use text_system::*;
 
 #[cfg(all(feature = "font-kit", feature = "test-support"))]
