@@ -120,10 +120,11 @@ impl Keymap {
                 return None;
             }
 
+            let keystrokes = folded_keystrokes(binding);
             for disabled_ix in &self.disabled_binding_indices {
                 if disabled_ix > ix {
                     let disabled_binding = &self.bindings[*disabled_ix];
-                    if folded_keystrokes(disabled_binding) != folded_keystrokes(binding) {
+                    if folded_keystrokes(disabled_binding) != keystrokes {
                         continue;
                     }
 
