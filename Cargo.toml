@@ -41,17 +41,17 @@ rust-version = "1.95"
 bench_metrics = { path = "crates/bench_metrics", package = "mhr-bench-metrics", version = "=0.1.0" }
 collections = { path = "crates/collections", package = "mhr-collections", version = "=0.1.0" }
 derive_refineable = { path = "crates/refineable/derive_refineable", package = "mhr-derive-refineable", version = "=0.1.0" }
-gpui = { path = "crates/gpui", package = "mhr-gpui", version = "=0.1.3", default-features = false }
-gpui_apple = { path = "crates/gpui_apple", package = "mhr-gpui-apple", version = "=0.1.3" }
-gpui_linux = { path = "crates/gpui_linux", package = "mhr-gpui-linux", version = "=0.1.3", default-features = false }
-gpui_macos = { path = "crates/gpui_macos", package = "mhr-gpui-macos", version = "=0.1.3", default-features = false }
+gpui = { path = "crates/gpui", package = "mhr-gpui", version = "=0.1.4", default-features = false }
+gpui_apple = { path = "crates/gpui_apple", package = "mhr-gpui-apple", version = "=0.1.4" }
+gpui_linux = { path = "crates/gpui_linux", package = "mhr-gpui-linux", version = "=0.1.4", default-features = false }
+gpui_macos = { path = "crates/gpui_macos", package = "mhr-gpui-macos", version = "=0.1.4", default-features = false }
 gpui_macros = { path = "crates/gpui_macros", package = "mhr-gpui-macros", version = "=0.1.0" }
-gpui_platform = { path = "crates/gpui_platform", package = "mhr-gpui-platform", version = "=0.1.3", default-features = false }
+gpui_platform = { path = "crates/gpui_platform", package = "mhr-gpui-platform", version = "=0.1.4", default-features = false }
 gpui_shared_string = { path = "crates/gpui_shared_string", package = "mhr-gpui-shared-string", version = "=0.1.0" }
 gpui_util = { path = "crates/gpui_util", package = "mhr-gpui-util", version = "=0.1.0" }
-gpui_web = { path = "crates/gpui_web", package = "mhr-gpui-web", version = "=0.1.3" }
-gpui_wgpu = { path = "crates/gpui_wgpu", package = "mhr-gpui-wgpu", version = "=0.1.3" }
-gpui_windows = { path = "crates/gpui_windows", package = "mhr-gpui-windows", version = "=0.1.3", default-features = false }
+gpui_web = { path = "crates/gpui_web", package = "mhr-gpui-web", version = "=0.1.4" }
+gpui_wgpu = { path = "crates/gpui_wgpu", package = "mhr-gpui-wgpu", version = "=0.1.4" }
+gpui_windows = { path = "crates/gpui_windows", package = "mhr-gpui-windows", version = "=0.1.4", default-features = false }
 http_client = { path = "crates/http_client", package = "mhr-http-client", version = "=0.1.0" }
 http_client_tls = { path = "crates/http_client_tls", package = "mhr-http-client-tls", version = "=0.1.0" }
 perf = { path = "tooling/perf", package = "mhr-perf", version = "=0.1.0" }
