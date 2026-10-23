@@ -39,8 +39,8 @@ impl KeyBinding {
     /// key (`ctrl-shift-\`). Platforms send Ctrl+Shift+\ as `ctrl-|`, and both spellings match
     /// it. The binding shows as written, so `ctrl-shift-\` reads as Ctrl+Shift+\ in a menu.
     /// Older versions of GPUI match only the symbol, so an app that supports them writes that.
-    /// Write a chord one way throughout an app's keymaps, since `Unbind` removes only a binding
-    /// spelled the same.
+    /// `null` and `Unbind` remove a binding in either spelling, in dispatch and in the shortcut
+    /// a menu shows.
     ///
     /// Shift on a key means the symbol a US keyboard types. `ctrl-shift-2` is Ctrl+@, which a UK
     /// keyboard types with Shift+', and the chord on its Shift+2 types `"` and needs `ctrl-"`.

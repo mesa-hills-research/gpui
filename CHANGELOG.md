@@ -7,6 +7,15 @@ detail.
 
 ## Unreleased
 
+### Key bindings
+
+- `Unbind`, `null`, the shortcut a menu shows and the pending-sequence check now read Shift on a
+  symbol key the way matching does. 0.1.4 made `ctrl-shift-\` and `ctrl-|` one chord for a typed
+  keystroke, but these compared the spelling, so `Unbind` of `ctrl-|` left a binding written
+  `ctrl-shift-\` in place. `bindings_for_action` kept showing a shortcut that `null` or `Unbind`
+  had disabled in the other spelling, and a sequence disabled in the other spelling still waited
+  for its next key. A chord can be written either way throughout a keymap.
+
 ### Keyboard
 
 - `Window::observe_modifiers_changed` calls back after every change of the modifier keys or of Caps
