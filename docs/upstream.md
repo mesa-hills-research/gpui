@@ -266,7 +266,8 @@ adds the same line.
   font runs, and the layouts are joined. The cuts depend on the words around them, so a change
   moves only the cuts near it. A line with right-to-left text, tabs or control characters is shaped
   whole, as is a line with a forced width. The cosmic-text system opts in, which covers Linux and
-  Android, and the others shape whole lines as before. `mhr-gpui-apple`'s copy of `platform.rs`
+  Android, and so does DirectWrite, in `mhr-gpui-windows`' `src/direct_write.rs`. The others shape
+  whole lines as before. `mhr-gpui-apple`'s copy of `platform.rs`
   under `vendor/gpui` follows the original. `crates/gpui_screenshot/tests/segmented_shaping.rs`
   compares segmented and whole layouts of ASCII, accented, Greek, Cyrillic, emoji, CJK, right-to-left
   and Indic text, and `long_line_measure.rs` there times a 2, 20 and 100 KB paragraph. The glyphs

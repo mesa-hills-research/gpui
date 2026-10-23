@@ -302,6 +302,10 @@ impl PlatformTextSystem for DirectWriteTextSystem {
             })
     }
 
+    fn shapes_words_independently(&self) -> bool {
+        true
+    }
+
     fn recommended_rendering_mode(
         &self,
         _font_id: FontId,
