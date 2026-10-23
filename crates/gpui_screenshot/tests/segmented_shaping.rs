@@ -1,5 +1,6 @@
-//! Laying out long lines in segments gives the layout of the whole line, with the Linux text system.
-#![cfg(target_os = "linux")]
+//! Laying out long lines in segments gives the layout of the whole line, with the text system of
+//! the platform. A text system that lays out every line whole has nothing to compare.
+#![cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 
 use std::{
     borrow::Cow,
@@ -13,12 +14,22 @@ use gpui::{
     TextSystem, WindowTextSystem, font, hsla, px,
 };
 use gpui_screenshot::{MONO_FAMILY, SANS_FAMILY, bundled_fonts};
+#[cfg(target_os = "linux")]
 use gpui_wgpu::CosmicTextSystem;
 
-/// The Linux text system, with a say in whether it declares that it shapes words on their own,
-/// and a count of what it shapes.
+/// Proportional families of the platform that the tests use besides the bundled ones, if the
+/// machine has them.
+#[cfg(target_os = "linux")]
+const SYSTEM_FAMILIES: &[&str] = &[];
+#[cfg(target_os = "windows")]
+const SYSTEM_FAMILIES: &[&str] = &["Segoe UI", "Arial", "Times New Roman"];
+#[cfg(target_os = "macos")]
+const SYSTEM_FAMILIES: &[&str] = &["Helvetica", "Helvetica Neue", "Times New Roman"];
+
+/// The platform's text system, with a say in whether it declares that it shapes words on their
+/// own, and a count of what it shapes.
 struct Delegate {
-    inner: Arc<CosmicTextSystem>,
+    inner: Arc<dyn PlatformTextSystem>,
     segmented: bool,
     shaped: Mutex<Vec<usize>>,
 }
@@ -30,6 +41,10 @@ impl PlatformTextSystem for Delegate {
 
     fn all_font_names(&self) -> Vec<String> {
         self.inner.all_font_names()
+    }
+
+    fn has_font_family(&self, name: &str) -> bool {
+        self.inner.has_font_family(name)
     }
 
     fn font_id(&self, descriptor: &Font) -> Result<FontId> {
@@ -86,7 +101,7 @@ struct Pair {
 }
 
 impl Pair {
-    fn new(platform: Arc<CosmicTextSystem>) -> Self {
+    fn new(platform: Arc<dyn PlatformTextSystem>) -> Self {
         let make = |segmented| {
             Arc::new(Delegate {
                 inner: platform.clone(),
@@ -101,6 +116,7 @@ impl Pair {
     }
 
     /// With the bundled fonts alone, where most scripts have no font.
+    #[cfg(target_os = "linux")]
     fn bundled() -> Self {
         let platform = Arc::new(CosmicTextSystem::new_without_system_fonts(SANS_FAMILY));
         platform.add_fonts(bundled_fonts()).unwrap();
@@ -109,9 +125,33 @@ impl Pair {
 
     /// With the fonts of the machine as well, which have glyphs for more of the samples.
     fn with_system_fonts() -> Self {
-        let platform = Arc::new(CosmicTextSystem::new(SANS_FAMILY));
+        #[cfg(target_os = "linux")]
+        let platform: Arc<dyn PlatformTextSystem> = Arc::new(CosmicTextSystem::new(SANS_FAMILY));
+        #[cfg(target_os = "windows")]
+        let platform = gpui_windows::text_system().unwrap();
+        #[cfg(target_os = "macos")]
+        let platform: Arc<dyn PlatformTextSystem> = Arc::new(gpui_macos::MacTextSystem::new());
         platform.add_fonts(bundled_fonts()).unwrap();
         Self::new(platform)
+    }
+
+    /// Whether the text system lays out long lines in segments.
+    fn segments(&self) -> bool {
+        self.segmented.shapes_words_independently()
+    }
+
+    /// The proportional families the tests lay text out in, which are the bundled one and those
+    /// of `SYSTEM_FAMILIES` that the machine has.
+    fn families(&self) -> Vec<&'static str> {
+        [SANS_FAMILY]
+            .into_iter()
+            .chain(
+                SYSTEM_FAMILIES
+                    .iter()
+                    .copied()
+                    .filter(|family| self.segmented.has_font_family(family)),
+            )
+            .collect()
     }
 }
 
@@ -145,33 +185,36 @@ fn compare(whole: &LineLayout, segmented: &LineLayout, context: &str) -> Differe
     assert_eq!(whole.len, segmented.len, "{context}");
     assert_eq!(whole.ascent, segmented.ascent, "{context}");
     assert_eq!(whole.descent, segmented.descent, "{context}");
-    assert_eq!(whole.runs.len(), segmented.runs.len(), "{context}");
     let mut relative = |a: Pixels, b: Pixels| {
         let (a, b) = (f32::from(a), f32::from(b));
         difference.relative = difference.relative.max((a - b).abs() / a.abs().max(1.));
     };
     relative(whole.width, segmented.width);
+    // Glyph by glyph with the font of each, since a text system may split a line into runs where
+    // another doesn't, and painting doesn't see the difference.
+    let glyphs = |layout: &LineLayout| {
+        layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| (run.font_id, glyph.clone())))
+            .collect::<Vec<_>>()
+    };
+    let (whole_glyphs, segmented_glyphs) = (glyphs(whole), glyphs(segmented));
+    assert_eq!(whole_glyphs.len(), segmented_glyphs.len(), "{context}");
     let mut previous = None::<(f32, f32)>;
     let mut advance = 0f32;
-    for (whole_run, segmented_run) in whole.runs.iter().zip(&segmented.runs) {
-        assert_eq!(whole_run.font_id, segmented_run.font_id, "{context}");
-        assert_eq!(
-            whole_run.glyphs.len(),
-            segmented_run.glyphs.len(),
-            "{context}"
-        );
-        for (a, b) in whole_run.glyphs.iter().zip(&segmented_run.glyphs) {
-            assert_eq!(a.id, b.id, "{context}");
-            assert_eq!(a.index, b.index, "{context}");
-            assert_eq!(a.is_emoji, b.is_emoji, "{context}");
-            assert_eq!(a.position.y, b.position.y, "{context}");
-            relative(a.position.x, b.position.x);
-            let (a, b) = (f32::from(a.position.x), f32::from(b.position.x));
-            if let Some((previous_a, previous_b)) = previous {
-                advance = advance.max(((a - previous_a) - (b - previous_b)).abs());
-            }
-            previous = Some((a, b));
+    for ((whole_font, a), (segmented_font, b)) in whole_glyphs.iter().zip(&segmented_glyphs) {
+        assert_eq!(whole_font, segmented_font, "{context}");
+        assert_eq!(a.id, b.id, "{context}");
+        assert_eq!(a.index, b.index, "{context}");
+        assert_eq!(a.is_emoji, b.is_emoji, "{context}");
+        assert_eq!(a.position.y, b.position.y, "{context}");
+        relative(a.position.x, b.position.x);
+        let (a, b) = (f32::from(a.position.x), f32::from(b.position.x));
+        if let Some((previous_a, previous_b)) = previous {
+            advance = advance.max(((a - previous_a) - (b - previous_b)).abs());
         }
+        previous = Some((a, b));
     }
     difference.advance = advance;
     difference
@@ -203,18 +246,15 @@ fn text_runs(text: &str, fonts: &[Font], step: usize) -> Vec<TextRun> {
 fn check(pair: &Pair, text: &str, runs: &[TextRun], context: &str) -> Vec<usize> {
     let whole = fresh(&pair.whole).layout_line(text, px(15.), runs, None);
     let segmented = fresh(&pair.segmented).layout_line(text, px(15.), runs, None);
+    let whole_shaped = std::mem::take(&mut *pair.whole.shaped.lock().unwrap());
+    let shaped = std::mem::take(&mut *pair.segmented.shaped.lock().unwrap());
     let difference = compare(&whole, &segmented, context);
     assert!(
         difference.advance <= advance_tolerance(whole.width)
             && difference.relative <= RELATIVE_TOLERANCE,
         "{context}: {difference:?}"
     );
-    assert_eq!(
-        std::mem::take(&mut *pair.whole.shaped.lock().unwrap()),
-        [text.len()],
-        "{context}"
-    );
-    let shaped = std::mem::take(&mut *pair.segmented.shaped.lock().unwrap());
+    assert_eq!(whole_shaped, [text.len()], "{context}");
     if shaped.len() == 1 {
         assert_eq!(shaped[0], text.len(), "{context}");
         Vec::new()
@@ -382,12 +422,22 @@ fn samples() -> Vec<Sample> {
     ]
 }
 
+/// Runs `check`, and counts a failure instead of panicking at the first, so that one run reports
+/// every layout that differs.
+fn attempt(failures: &mut usize, check: impl FnOnce()) {
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(check)).is_err() {
+        *failures += 1;
+    }
+}
+
 fn run_all(pair: &Pair, system: &str) {
-    let fonts = [
+    let mut fonts = vec![
         font(SANS_FAMILY),
         font(SANS_FAMILY).bold(),
         font(MONO_FAMILY),
     ];
+    fonts.extend(pair.families().into_iter().skip(1).map(font));
+    let mut failures = 0;
     for sample in samples() {
         let Sample {
             name,
@@ -398,10 +448,16 @@ fn run_all(pair: &Pair, system: &str) {
         // and in the middle of a word.
         for step in [usize::MAX, 997, 61] {
             let step = step.min(text.len());
-            let runs = text_runs(text, &fonts[..if step == text.len() { 1 } else { 3 }], step);
+            let runs = text_runs(
+                text,
+                &fonts[..if step == text.len() { 1 } else { fonts.len() }],
+                step,
+            );
             let context = format!("{system}, {name}, font runs every {step} bytes");
-            let segments = check(pair, text, &runs, &context);
-            assert_eq!(!segments.is_empty(), *segmentable, "{context}");
+            attempt(&mut failures, || {
+                let segments = check(pair, text, &runs, &context);
+                assert_eq!(!segments.is_empty(), *segmentable, "{context}");
+            });
         }
         // The text cut off at different places, as when it is typed.
         for len in [1500, 3000, text.len() - 1] {
@@ -411,11 +467,15 @@ fn run_all(pair: &Pair, system: &str) {
             }
             let text = &text[..end];
             let runs = text_runs(text, &fonts[..2], 500);
-            check(pair, text, &runs, &format!("{system}, {name}, {end} bytes"));
+            attempt(&mut failures, || {
+                check(pair, text, &runs, &format!("{system}, {name}, {end} bytes"));
+            });
         }
     }
+    assert_eq!(failures, 0, "{system}, {failures} layouts differ");
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn a_line_in_segments_has_the_layout_of_the_whole_line() {
     run_all(&Pair::bundled(), "bundled fonts");
@@ -423,12 +483,67 @@ fn a_line_in_segments_has_the_layout_of_the_whole_line() {
 
 #[test]
 fn a_line_in_segments_has_the_layout_of_the_whole_line_with_system_fonts() {
-    run_all(&Pair::with_system_fonts(), "system fonts");
+    let pair = Pair::with_system_fonts();
+    if pair.segments() {
+        run_all(&pair, "system fonts");
+    }
+}
+
+/// Words that start with the capitals that kern against a space in many fonts, such as A, T, V, W
+/// and Y in Arial and Times New Roman, so that every place to cut the line is before one.
+fn kerning_text(len: usize) -> String {
+    const WORDS: [&str; 28] = [
+        "Avenue", "Tower", "Valley", "Water", "Yacht", "Atlas", "Title", "Vase", "Wasp", "Yarn",
+        "Type", "Voyage", "Away", "Today", "Way", "To", "AV", "WA", "TA", "VAT", "AT", "LT", "Ty",
+        "Wy", "Ya", "Fly", "Pry", "Try",
+    ];
+    // Words in an order that doesn't repeat, since a segment seen before comes from the cache.
+    let mut state = 1u32;
+    let mut text = String::new();
+    while text.len() < len {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        text.push_str(WORDS[(state >> 16) as usize % WORDS.len()]);
+        text.push(' ');
+    }
+    text
+}
+
+#[test]
+fn kerning_next_to_a_space_does_not_move_a_segment() {
+    let pair = Pair::with_system_fonts();
+    if !pair.segments() {
+        return;
+    }
+    let text = kerning_text(6_000);
+    let mut failures = 0;
+    for family in pair.families() {
+        for bold in [false, true] {
+            let font = if bold {
+                font(family).bold()
+            } else {
+                font(family)
+            };
+            let context = format!("{family}, bold {bold}");
+            attempt(&mut failures, || {
+                let runs = text_runs(&text, &[font], usize::MAX);
+                let segments = check(&pair, &text, &runs, &context);
+                assert!(
+                    segments.len() >= 10,
+                    "{context}, {} segments",
+                    segments.len()
+                );
+            });
+        }
+    }
+    assert_eq!(failures, 0, "{failures} layouts differ");
 }
 
 #[test]
 fn a_wrapped_paragraph_wraps_where_the_whole_line_does() {
     let pair = Pair::with_system_fonts();
+    if !pair.segments() {
+        return;
+    }
     let fonts = [font(SANS_FAMILY), font(SANS_FAMILY).bold()];
     for sample in samples() {
         let text = SharedString::from(sample.text.clone());
@@ -453,6 +568,7 @@ fn a_wrapped_paragraph_wraps_where_the_whole_line_does() {
     }
 }
 
+#[cfg(target_os = "linux")]
 #[test]
 fn changing_a_paragraph_shapes_a_few_segments() {
     let pair = Pair::bundled();

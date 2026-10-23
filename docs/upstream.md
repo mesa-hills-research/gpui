@@ -276,7 +276,11 @@ adds the same line.
   The whole line drifts from the exact sum by more than that over 90,000px, so the segments are the
   closer. Wrapping follows the positions. Of 1,800 layouts of 300 random paragraphs of 1 to 10 KB at
   six widths, 23 (1.3%) put one word on the other side of a line end than the whole line does, each
-  time a line end within a fraction of a pixel of the wrap width.
+  time a line end within a fraction of a pixel of the wrap width. The same test runs with
+  DirectWrite on Windows and CoreText on macOS, once they say they shape words independently, and
+  adds a text of words that start with A, T, V, W or Y in Arial, Times New Roman, Helvetica and the
+  like, since a font may kern a space against those. `mhr-gpui-windows`' `src/gpui_windows.rs` and
+  `mhr-gpui-macos`' `src/gpui_macos.rs` give it the platform's text system under `test-support`.
 - **Shift on a symbol key in key bindings**, in `mhr-gpui`'s `src/platform/keystroke.rs`, with
   documentation in `src/keymap/binding.rs`. Windows, Linux and macOS send Ctrl+Shift+\ on a US
   keyboard as `ctrl-|`, since they drop Shift from every key that isn't a letter or a named key,

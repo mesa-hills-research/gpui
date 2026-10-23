@@ -16,6 +16,11 @@ detail.
   to poll `Window::modifiers`. The callback runs after the elements have seen the change, even when
   one of them stops it, and dropping the returned `Subscription` ends it.
 
+### Test support
+
+- `gpui_windows::text_system` and `gpui_macos::MacTextSystem` give a test the platform's
+  text system, with the crate's `test-support` feature (and `font-kit` on macOS).
+
 ## 0.1.4
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,
