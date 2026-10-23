@@ -19,7 +19,7 @@ every Monday and by hand. For 0.3.8 the script:
   `gpui_macros`' 19 proc-macro entry points, the `actions!` macro, and `gpui_apple`'s build
   script, which gets the five gpui sources it reads copied under `vendor/gpui`. Each rewritten
   file starts with a "Modified for gpui-pre" line.
-- left out every `[dev-dependencies]` table (see [testing.md](testing.md))
+- left out every `[dev-dependencies]` table (some are back, see [testing.md](testing.md))
 - put `LICENSE-APACHE` in every crate and Zed's root `LICENSE-*` files at the workspace root
 
 ## Bringing in a release
@@ -266,7 +266,11 @@ adds the same line.
   font runs, and the layouts are joined. The cuts depend on the words around them, so a change
   moves only the cuts near it. A line with right-to-left text, tabs or control characters is shaped
   whole, as is a line with a forced width. The cosmic-text system opts in, which covers Linux and
-  Android, and the others shape whole lines as before. `mhr-gpui-apple`'s copy of `platform.rs`
+  Android, and the others shape whole lines as before. CoreText kerns a letter against the space
+  before it, even in Roboto, so a cut after a space moves the next word by up to 0.8px at 15px and
+  macOS shapes whole lines. DirectWrite doesn't kern across a space, but a whole line takes its
+  ascent from its first font and each segment from its own, so the two disagree on a line in several
+  fonts, and Windows shapes whole lines as well. `mhr-gpui-apple`'s copy of `platform.rs`
   under `vendor/gpui` follows the original. `crates/gpui_screenshot/tests/segmented_shaping.rs`
   compares segmented and whole layouts of ASCII, accented, Greek, Cyrillic, emoji, CJK, right-to-left
   and Indic text, and `long_line_measure.rs` there times a 2, 20 and 100 KB paragraph. The glyphs
@@ -277,7 +281,7 @@ adds the same line.
   closer. Wrapping follows the positions. Of 1,800 layouts of 300 random paragraphs of 1 to 10 KB at
   six widths, 23 (1.3%) put one word on the other side of a line end than the whole line does, each
   time a line end within a fraction of a pixel of the wrap width. The same test runs with
-  DirectWrite on Windows and CoreText on macOS, once they say they shape words independently, and
+  DirectWrite on Windows and CoreText on macOS if they ever say they shape words independently, and
   adds a text of words that start with A, T, V, W or Y in Arial, Times New Roman, Helvetica and the
   like, since a font may kern a space against those. `mhr-gpui-windows`' `src/gpui_windows.rs` and
   `mhr-gpui-macos`' `src/gpui_macos.rs` give it the platform's text system under `test-support`.
@@ -337,7 +341,7 @@ adds the same line.
   an element never hears it then. `Window::observe_modifiers_changed` registers a callback that
   `Window::dispatch_event` calls after every `ModifiersChanged` event, once the elements have seen
   it and even if one of them stopped it. `mhr-gpui-apple`'s copy of `window.rs` under `vendor/gpui`
-  follows it. The test at the end of `window.rs` covers it.
+  follows it. A test in `window.rs` covers it.
 
 ## The mobile crate
 
