@@ -88,11 +88,23 @@ impl Scene {
 
     pub fn insert_primitive(&mut self, primitive: impl Into<Primitive>) {
         let mut primitive = primitive.into();
-        let clipped_bounds = primitive
-            .bounds()
-            .intersect(&primitive.content_mask().bounds);
+        // Where it is drawn: an effect moves it, and the clip it was painted under stays where it
+        // was.
+        let drawn_bounds = self
+            .effect_stack
+            .last()
+            .map_or(*primitive.bounds(), |effect| {
+                shifted(*primitive.bounds(), effect.translation)
+            });
+        let clipped_bounds = drawn_bounds.intersect(&primitive.content_mask().bounds);
 
         if clipped_bounds.is_empty() {
+            // Out of view where an effect puts it now, and perhaps in view where a later frame
+            // puts it, so what is kept to replay includes it.
+            if !self.effect_stack.is_empty() {
+                self.paint_operations
+                    .push(PaintOperation::Primitive(primitive));
+            }
             return;
         }
 
@@ -136,22 +148,40 @@ impl Scene {
     }
 
     /// Applies `effect` to what is inserted until the matching [`Self::pop_effect`]. Rotation
-    /// turns sprites about `center`.
-    pub fn push_effect(&mut self, effect: PaintEffect, center: Point<ScaledPixels>) {
+    /// turns sprites about `center`, and then the translation moves what is painted. `scale_factor`
+    /// takes the translation to scaled pixels.
+    pub fn push_effect(
+        &mut self,
+        effect: PaintEffect,
+        center: Point<ScaledPixels>,
+        scale_factor: f32,
+    ) {
         let outer = self.effect_stack.last();
         let opacity = outer.map_or(1., |outer| outer.opacity) * effect.opacity;
-        let turn = (effect.rotation.0 != 0.).then(|| {
-            TransformationMatrix::unit()
-                .translate(center)
-                .rotate(effect.rotation)
-                .translate(center.map(|coordinate| ScaledPixels(-coordinate.0)))
+        let offset = effect.translation.scale(scale_factor);
+        let translation = outer.map_or(Point::default(), |outer| outer.translation) + offset;
+        // The sprites that have a transformation move with it, so the translation is in the
+        // transformation of the effect, which turns them first and moves them after.
+        let moves = offset != Point::default();
+        let turns = effect.rotation.0 != 0.;
+        let own = (moves || turns).then(|| {
+            let moved = TransformationMatrix::unit().translate(offset);
+            if turns {
+                moved
+                    .translate(center)
+                    .rotate(effect.rotation)
+                    .translate(center.map(|coordinate| ScaledPixels(-coordinate.0)))
+            } else {
+                moved
+            }
         });
-        let transformation = match (outer.and_then(|outer| outer.transformation), turn) {
-            (Some(outer), Some(turn)) => Some(outer.compose(turn)),
-            (outer, turn) => outer.or(turn),
+        let transformation = match (outer.and_then(|outer| outer.transformation), own) {
+            (Some(outer), Some(own)) => Some(outer.compose(own)),
+            (outer, own) => outer.or(own),
         };
         self.effect_stack.push(ActiveEffect {
             opacity,
+            translation,
             transformation,
         });
     }
@@ -241,6 +271,10 @@ pub(crate) enum PaintOperation {
 
 /// A change to how an element paints that an animation can make without laying the element out
 /// again, so that it can be replayed when the view the element is in is reused.
+///
+/// An effect changes what is painted and nothing else. Hit testing, focus, the bounds an element
+/// reports, tooltips and the place of an input method stay where the element was laid out, and an
+/// effect that moves an element does not move them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaintEffect {
     /// Multiplies the opacity of everything the element paints.
@@ -248,6 +282,14 @@ pub struct PaintEffect {
     /// Turns the sprites the element paints, such as the glyphs of an icon, about the element's
     /// centre. Other primitives stay where they are.
     pub rotation: Radians,
+    /// Moves everything the element paints by this much, in logical pixels: quads, shadows,
+    /// underlines, paths, sprites and surfaces. A rotation turns the sprites about the element's
+    /// centre first, and the translation moves them with the rest.
+    ///
+    /// The clip an element paints under stays where it is, as the clip of a parent does around a
+    /// child that moves in it, so an element that moves out of its clip is cut by the clip. That
+    /// goes for a clip inside the element too, which doesn't move with what is clipped by it.
+    pub translation: Point<Pixels>,
 }
 
 impl PaintEffect {
@@ -255,6 +297,10 @@ impl PaintEffect {
     pub const NONE: PaintEffect = PaintEffect {
         opacity: 1.,
         rotation: Radians(0.),
+        translation: Point {
+            x: Pixels(0.),
+            y: Pixels(0.),
+        },
     };
 
     /// An effect that multiplies the opacity of what is painted by `opacity`.
@@ -272,6 +318,33 @@ impl PaintEffect {
             ..Self::NONE
         }
     }
+
+    /// An effect that moves what is painted by `translation`.
+    pub fn translation(translation: Point<Pixels>) -> Self {
+        Self {
+            translation,
+            ..Self::NONE
+        }
+    }
+
+    /// This effect with the opacity set to `opacity`.
+    pub fn with_opacity(self, opacity: f32) -> Self {
+        Self { opacity, ..self }
+    }
+
+    /// This effect with the rotation set to `rotation`.
+    pub fn with_rotation(self, rotation: Radians) -> Self {
+        Self { rotation, ..self }
+    }
+
+    /// This effect with the translation set to `translation`, for an element that fades as it
+    /// moves.
+    pub fn with_translation(self, translation: Point<Pixels>) -> Self {
+        Self {
+            translation,
+            ..self
+        }
+    }
 }
 
 impl Default for PaintEffect {
@@ -283,21 +356,47 @@ impl Default for PaintEffect {
 /// The paint effects around what is inserted, composed.
 struct ActiveEffect {
     opacity: f32,
+    /// How far the effects together move what is painted, in scaled pixels.
+    translation: Point<ScaledPixels>,
+    /// What turns and moves the sprites that have a transformation.
     transformation: Option<TransformationMatrix>,
+}
+
+/// `bounds`, moved by `offset`.
+fn shifted(bounds: Bounds<ScaledPixels>, offset: Point<ScaledPixels>) -> Bounds<ScaledPixels> {
+    Bounds {
+        origin: bounds.origin + offset,
+        size: bounds.size,
+    }
 }
 
 impl ActiveEffect {
     fn apply(&self, primitive: &Primitive) -> Primitive {
         let opacity = self.opacity;
+        let offset = self.translation;
         let mut primitive = primitive.clone();
         match &mut primitive {
-            Primitive::Shadow(shadow) => shadow.color = shadow.color.opacity(opacity),
+            Primitive::Shadow(shadow) => {
+                shadow.color = shadow.color.opacity(opacity);
+                shadow.bounds = shifted(shadow.bounds, offset);
+                shadow.element_bounds = shifted(shadow.element_bounds, offset);
+            }
             Primitive::Quad(quad) => {
                 quad.background = quad.background.opacity(opacity);
                 quad.border_color = quad.border_color.opacity(opacity);
+                quad.bounds = shifted(quad.bounds, offset);
             }
-            Primitive::Path(path) => path.color = path.color.opacity(opacity),
-            Primitive::Underline(underline) => underline.color = underline.color.opacity(opacity),
+            Primitive::Path(path) => {
+                path.color = path.color.opacity(opacity);
+                path.bounds = shifted(path.bounds, offset);
+                for vertex in &mut path.vertices {
+                    vertex.xy_position = vertex.xy_position + offset;
+                }
+            }
+            Primitive::Underline(underline) => {
+                underline.color = underline.color.opacity(opacity);
+                underline.bounds = shifted(underline.bounds, offset);
+            }
             Primitive::MonochromeSprite(sprite) => {
                 sprite.color = sprite.color.opacity(opacity);
                 if let Some(transformation) = self.transformation {
@@ -310,8 +409,11 @@ impl ActiveEffect {
                     sprite.transformation = transformation.compose(sprite.transformation);
                 }
             }
-            Primitive::PolychromeSprite(sprite) => sprite.opacity *= opacity,
-            Primitive::Surface(_) => {}
+            Primitive::PolychromeSprite(sprite) => {
+                sprite.opacity *= opacity;
+                sprite.bounds = shifted(sprite.bounds, offset);
+            }
+            Primitive::Surface(surface) => surface.bounds = shifted(surface.bounds, offset),
         }
         primitive
     }
@@ -1110,7 +1212,7 @@ mod tests {
     #[test]
     fn an_effect_changes_what_is_drawn_and_not_what_is_kept() {
         let mut scene = Scene::default();
-        scene.push_effect(PaintEffect::opacity(0.5), center());
+        scene.push_effect(PaintEffect::opacity(0.5), center(), 1.);
         scene.insert_primitive(quad());
         scene.pop_effect();
         scene.insert_primitive(quad());
@@ -1130,7 +1232,7 @@ mod tests {
 
         // Replaying applies the effect that is active then to the primitive as it was.
         let mut replayed = Scene::default();
-        replayed.push_effect(PaintEffect::opacity(0.25), center());
+        replayed.push_effect(PaintEffect::opacity(0.25), center(), 1.);
         replayed.replay(0..2, &scene);
         replayed.pop_effect();
         assert_eq!(replayed.quads[0].background.solid.a, 0.25);
@@ -1141,8 +1243,8 @@ mod tests {
     #[test]
     fn effects_compose_and_end_with_their_element() {
         let mut scene = Scene::default();
-        scene.push_effect(PaintEffect::opacity(0.5), center());
-        scene.push_effect(PaintEffect::opacity(0.5), center());
+        scene.push_effect(PaintEffect::opacity(0.5), center(), 1.);
+        scene.push_effect(PaintEffect::opacity(0.5), center(), 1.);
         scene.insert_primitive(quad());
         scene.pop_effect();
         scene.insert_primitive(quad());
@@ -1159,7 +1261,7 @@ mod tests {
     #[test]
     fn an_effect_changes_the_opacity_of_every_kind_of_primitive() {
         let mut scene = Scene::default();
-        scene.push_effect(PaintEffect::opacity(0.5), center());
+        scene.push_effect(PaintEffect::opacity(0.5), center(), 1.);
         scene.insert_primitive(Shadow {
             order: 0,
             blur_radius: ScaledPixels(2.),
@@ -1222,6 +1324,7 @@ mod tests {
         scene.push_effect(
             PaintEffect::rotation(radians(std::f32::consts::FRAC_PI_2)),
             center(),
+            1.,
         );
         scene.insert_primitive(quad());
         scene.insert_primitive(monochrome_sprite());
@@ -1257,10 +1360,12 @@ mod tests {
         scene.push_effect(
             PaintEffect::rotation(radians(std::f32::consts::PI)),
             point(ScaledPixels(0.), ScaledPixels(0.)),
+            1.,
         );
         scene.push_effect(
             PaintEffect::rotation(radians(std::f32::consts::PI)),
             point(ScaledPixels(0.), ScaledPixels(0.)),
+            1.,
         );
         scene.insert_primitive(MonochromeSprite {
             transformation: own,
@@ -1278,10 +1383,299 @@ mod tests {
         );
     }
 
+    fn moved(x: f32, y: f32) -> PaintEffect {
+        PaintEffect::translation(point(crate::px(x), crate::px(y)))
+    }
+
+    fn shadow() -> Shadow {
+        Shadow {
+            order: 0,
+            blur_radius: ScaledPixels(2.),
+            bounds: bounds(10., 10., 20., 20.),
+            corner_radii: Default::default(),
+            content_mask: content_mask(),
+            color: hsla(0., 0., 0., 0.6),
+            element_bounds: bounds(12., 12., 16., 16.),
+            element_corner_radii: Default::default(),
+            inset: 0,
+            pad: 0,
+        }
+    }
+
+    fn underline() -> Underline {
+        Underline {
+            order: 0,
+            pad: 0,
+            bounds: bounds(10., 28., 20., 2.),
+            content_mask: content_mask(),
+            color: hsla(0., 0., 0., 0.6),
+            thickness: ScaledPixels(1.),
+            wavy: false.into(),
+        }
+    }
+
+    fn path() -> Path<ScaledPixels> {
+        let mut path = Path::new(point(crate::px(10.), crate::px(10.))).scale(1.);
+        path.bounds = bounds(10., 10., 20., 20.);
+        path.content_mask = content_mask();
+        path.color = red().into();
+        for (x, y) in [(10., 10.), (30., 10.), (10., 30.)] {
+            path.vertices.push(PathVertex {
+                xy_position: point(ScaledPixels(x), ScaledPixels(y)),
+                st_position: point(0., 0.),
+                content_mask: content_mask(),
+            });
+        }
+        path
+    }
+
+    fn polychrome_sprite() -> PolychromeSprite {
+        PolychromeSprite {
+            order: 0,
+            pad: 0,
+            grayscale: false.into(),
+            opacity: 0.8,
+            bounds: bounds(10., 10., 20., 20.),
+            content_mask: content_mask(),
+            corner_radii: Default::default(),
+            tile: tile(),
+        }
+    }
+
+    #[test]
+    fn a_translation_moves_every_kind_of_primitive_and_the_clip_stays() {
+        let mut scene = Scene::default();
+        // Logical pixels, at the scale of 2 of the window.
+        scene.push_effect(moved(3., 4.), center(), 2.);
+        scene.insert_primitive(quad());
+        scene.insert_primitive(shadow());
+        scene.insert_primitive(underline());
+        scene.insert_primitive(path());
+        scene.insert_primitive(polychrome_sprite());
+        scene.pop_effect();
+
+        assert_eq!(scene.quads[0].bounds, bounds(16., 18., 20., 20.));
+        assert_eq!(scene.shadows[0].bounds, bounds(16., 18., 20., 20.));
+        assert_eq!(scene.shadows[0].element_bounds, bounds(18., 20., 16., 16.));
+        assert_eq!(scene.underlines[0].bounds, bounds(16., 36., 20., 2.));
+        assert_eq!(scene.paths[0].bounds, bounds(16., 18., 20., 20.));
+        let corners: Vec<_> = scene.paths[0]
+            .vertices
+            .iter()
+            .map(|vertex| (vertex.xy_position.x.0, vertex.xy_position.y.0))
+            .collect();
+        assert_eq!(corners, [(16., 18.), (36., 18.), (16., 38.)]);
+        assert_eq!(
+            scene.polychrome_sprites[0].bounds,
+            bounds(16., 18., 20., 20.)
+        );
+        // Opacity stays as it was.
+        assert_eq!(scene.quads[0].background.solid.a, 1.);
+        assert_eq!(scene.polychrome_sprites[0].opacity, 0.8);
+        // The clip they were painted under did not move.
+        assert_eq!(scene.quads[0].content_mask, content_mask());
+        assert_eq!(scene.shadows[0].content_mask, content_mask());
+        assert_eq!(scene.polychrome_sprites[0].content_mask, content_mask());
+        // What is kept to replay is where they were painted.
+        let PaintOperation::Primitive(Primitive::Quad(kept)) = &scene.paint_operations[0] else {
+            panic!("a quad");
+        };
+        assert_eq!(kept.bounds, bounds(10., 10., 20., 20.));
+        let PaintOperation::Primitive(Primitive::Path(kept)) = &scene.paint_operations[3] else {
+            panic!("a path");
+        };
+        assert_eq!(kept.bounds, bounds(10., 10., 20., 20.));
+        assert_eq!(kept.vertices[1].xy_position.x, ScaledPixels(30.));
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    #[test]
+    fn a_translation_moves_a_surface() {
+        let mut scene = Scene::default();
+        scene.push_effect(moved(3., 4.), center(), 1.);
+        scene.insert_primitive(PaintSurface {
+            order: 0,
+            bounds: bounds(10., 10., 20., 20.),
+            content_mask: content_mask(),
+        });
+        scene.pop_effect();
+        assert_eq!(scene.surfaces[0].bounds, bounds(13., 14., 20., 20.));
+    }
+
+    #[test]
+    fn a_translation_moves_sprites_by_their_transformation() {
+        let mut scene = Scene::default();
+        scene.push_effect(moved(3., 4.), center(), 1.);
+        scene.insert_primitive(monochrome_sprite());
+        scene.insert_primitive(SubpixelSprite {
+            order: 0,
+            pad: 0,
+            bounds: bounds(10., 10., 20., 20.),
+            content_mask: content_mask(),
+            color: hsla(0., 0., 1., 0.5),
+            tile: tile(),
+            transformation: TransformationMatrix::unit(),
+        });
+        scene.pop_effect();
+
+        let at = |transformation: TransformationMatrix, x: f32, y: f32| {
+            let moved = transformation.apply(point(crate::px(x), crate::px(y)));
+            (moved.x.0, moved.y.0)
+        };
+        assert_eq!(
+            at(scene.monochrome_sprites[0].transformation, 30., 20.),
+            (33., 24.)
+        );
+        assert_eq!(
+            at(scene.subpixel_sprites[0].transformation, 0., 0.),
+            (3., 4.)
+        );
+        assert_eq!(
+            scene.monochrome_sprites[0].bounds,
+            bounds(10., 10., 20., 20.)
+        );
+    }
+
+    #[test]
+    fn a_rotation_turns_sprites_before_a_translation_moves_them() {
+        let mut scene = Scene::default();
+        scene.push_effect(
+            moved(5., 7.).with_rotation(radians(std::f32::consts::FRAC_PI_2)),
+            center(),
+            1.,
+        );
+        scene.insert_primitive(quad());
+        scene.insert_primitive(monochrome_sprite());
+        scene.pop_effect();
+
+        // A quarter turn about (20, 20) takes (30, 20) to (20, 30), and the move follows.
+        let turned = scene.monochrome_sprites[0]
+            .transformation
+            .apply(point(crate::px(30.), crate::px(20.)));
+        assert!(
+            (turned.x.0 - 25.).abs() < 1e-4 && (turned.y.0 - 37.).abs() < 1e-4,
+            "{turned:?}"
+        );
+        // The centre went where the quad did.
+        let centre = scene.monochrome_sprites[0]
+            .transformation
+            .apply(point(crate::px(20.), crate::px(20.)));
+        assert!((centre.x.0 - 25.).abs() < 1e-4 && (centre.y.0 - 27.).abs() < 1e-4);
+        assert_eq!(scene.quads[0].bounds, bounds(15., 17., 20., 20.));
+    }
+
+    #[test]
+    fn translations_add_up_and_opacity_and_translation_go_together() {
+        let mut scene = Scene::default();
+        scene.push_effect(moved(10., 0.).with_opacity(0.5), center(), 1.);
+        scene.push_effect(moved(0., 5.).with_opacity(0.5), center(), 1.);
+        scene.insert_primitive(quad());
+        scene.insert_primitive(monochrome_sprite());
+        scene.pop_effect();
+        scene.insert_primitive(quad());
+        scene.pop_effect();
+        scene.insert_primitive(quad());
+
+        let drawn: Vec<_> = scene
+            .quads
+            .iter()
+            .map(|quad| {
+                (
+                    quad.bounds.origin.x.0,
+                    quad.bounds.origin.y.0,
+                    quad.background.solid.a,
+                )
+            })
+            .collect();
+        assert_eq!(drawn, [(20., 15., 0.25), (20., 10., 0.5), (10., 10., 1.)]);
+        let moved = scene.monochrome_sprites[0]
+            .transformation
+            .apply(point(crate::px(0.), crate::px(0.)));
+        assert_eq!((moved.x.0, moved.y.0), (10., 5.));
+    }
+
+    #[test]
+    fn an_outer_rotation_carries_what_an_inner_translation_moves() {
+        let mut scene = Scene::default();
+        let origin = point(ScaledPixels(0.), ScaledPixels(0.));
+        scene.push_effect(
+            PaintEffect::rotation(radians(std::f32::consts::PI)),
+            origin,
+            1.,
+        );
+        scene.push_effect(moved(1., 0.), origin, 1.);
+        scene.insert_primitive(monochrome_sprite());
+        scene.pop_effect();
+        scene.pop_effect();
+
+        // The inner move takes (2, 3) to (3, 3), and a half turn about the origin takes that to
+        // (-3, -3).
+        let turned = scene.monochrome_sprites[0]
+            .transformation
+            .apply(point(crate::px(2.), crate::px(3.)));
+        assert!(
+            (turned.x.0 + 3.).abs() < 1e-4 && (turned.y.0 + 3.).abs() < 1e-4,
+            "{turned:?}"
+        );
+    }
+
+    #[test]
+    fn a_translation_is_for_the_place_a_primitive_is_drawn_at() {
+        // A quad painted at (10, 10), under a clip that ends at 50.
+        let clipped = |x: f32| Quad {
+            bounds: bounds(x, 10., 20., 20.),
+            content_mask: ContentMask {
+                bounds: bounds(0., 0., 50., 50.),
+            },
+            ..quad()
+        };
+        let mut scene = Scene::default();
+        scene.push_effect(moved(100., 0.), center(), 1.);
+        scene.insert_primitive(clipped(10.));
+        scene.pop_effect();
+        // Painted outside the clip, and moved into it.
+        scene.push_effect(moved(-60., 0.), center(), 1.);
+        scene.insert_primitive(clipped(60.));
+        scene.pop_effect();
+        assert_eq!(scene.quads.len(), 1, "one moved out of its clip, one in");
+        assert_eq!(scene.quads[0].bounds, bounds(0., 10., 20., 20.));
+        assert_eq!(scene.len(), 2, "and both are kept");
+    }
+
+    #[test]
+    fn what_a_translation_hid_is_there_to_replay_when_it_moves_back() {
+        let clipped = Quad {
+            content_mask: ContentMask {
+                bounds: bounds(0., 0., 50., 50.),
+            },
+            ..quad()
+        };
+        let mut scene = Scene::default();
+        scene.push_effect(moved(100., 0.), center(), 1.);
+        scene.insert_primitive(clipped);
+        scene.pop_effect();
+        assert!(scene.quads.is_empty(), "moved out of its clip");
+        assert_eq!(scene.len(), 1, "and kept");
+
+        let mut replayed = Scene::default();
+        replayed.push_effect(moved(20., 0.), center(), 1.);
+        replayed.replay(0..1, &scene);
+        replayed.pop_effect();
+        assert_eq!(replayed.quads[0].bounds, bounds(30., 10., 20., 20.));
+
+        // Without an effect, a primitive outside its clip is dropped, as it always was.
+        let mut plain = Scene::default();
+        plain.insert_primitive(Quad {
+            bounds: bounds(100., 10., 20., 20.),
+            ..clipped
+        });
+        assert_eq!(plain.len(), 0);
+    }
+
     #[test]
     fn a_scene_that_is_cleared_has_no_effect_left() {
         let mut scene = Scene::default();
-        scene.push_effect(PaintEffect::opacity(0.5), center());
+        scene.push_effect(PaintEffect::opacity(0.5), center(), 1.);
         scene.clear();
         scene.insert_primitive(quad());
         assert_eq!(scene.quads[0].background.solid.a, 1.);

@@ -1,6 +1,6 @@
 [package]
 name = "mhr-gpui-screenshot"
-version = "0.1.6"
+version = "0.1.7"
 edition = { workspace = true }
 publish = true
 # The code is Apache-2.0. The bundled fonts keep the licences in fonts/.
