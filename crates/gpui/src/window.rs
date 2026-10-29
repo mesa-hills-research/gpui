@@ -4214,7 +4214,9 @@ impl Window {
             replayed = place;
             if starts {
                 let (effect, center) = applied[order];
-                self.next_frame.scene.push_effect(effect, center);
+                self.next_frame
+                    .scene
+                    .push_effect(effect, center, scale_factor);
             } else {
                 self.next_frame.scene.pop_effect();
             }
@@ -4234,12 +4236,15 @@ impl Window {
         self.invalidator.debug_assert_paint();
         let (effect, done) = record.at(&self.frame_time);
         record.done = done;
-        let center = record.bounds.center().scale(self.scale_factor());
+        let scale_factor = self.scale_factor();
+        let center = record.bounds.center().scale(scale_factor);
         let start = self.next_frame.scene.len();
         record.ops = start..start;
         let ix = self.next_frame.paint_effects.len();
         self.next_frame.paint_effects.push(record);
-        self.next_frame.scene.push_effect(effect, center);
+        self.next_frame
+            .scene
+            .push_effect(effect, center, scale_factor);
         let result = f(self);
         self.next_frame.scene.pop_effect();
         self.next_frame.paint_effects[ix].ops.end = self.next_frame.scene.len();

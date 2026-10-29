@@ -131,6 +131,12 @@ pub trait AnimationExt {
     /// drew, with the effect applied. Use [`Self::with_animation`] for an animation that changes
     /// the element itself.
     ///
+    /// An effect can fade the element, turn its sprites and move everything it paints, as
+    /// [`PaintEffect::translation`] describes. It changes what is painted and nothing else, so
+    /// the element's hitboxes, bounds and focus stay where it was laid out. A click where an
+    /// element that has moved is drawn doesn't reach it, and a click where it was laid out does.
+    /// Effects of nested elements add up.
+    ///
     /// Like [`Self::with_animation`], the effect holds still at its start, or at its end for a
     /// oneshot animation, while [`App::reduce_motion`](crate::App::reduce_motion) is set.
     fn with_paint_animation(
@@ -770,8 +776,9 @@ mod tests {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use crate::{
-        Animation, App, Context, Entity, InteractiveElement, Pixels, Render, SpringAnimation,
-        SpringConfig, StyleRefinement, TestAppContext, WindowHandle, div, prelude::*, px, size,
+        Animation, App, Context, Entity, InteractiveElement, Modifiers, MouseButton, Pixels,
+        Render, SpringAnimation, SpringConfig, StyleRefinement, TestAppContext, VisualTestContext,
+        WindowHandle, div, point, prelude::*, px, size,
     };
 
     use super::*;
@@ -1561,6 +1568,169 @@ mod tests {
             cx.run_until_parked();
         }
         assert_eq!(fixture.advance(cx, Duration::from_millis(100)), 1);
+    }
+
+    /// A view with a box that rises and fades as it is pressed, inside a box that slides
+    /// across, both with paint animations. It counts how often it renders and how often the
+    /// inner box is pressed.
+    struct SlideView {
+        renders: Rc<RefCell<usize>>,
+        presses: Rc<RefCell<usize>>,
+    }
+
+    impl Render for SlideView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            *self.renders.borrow_mut() += 1;
+            let presses = self.presses.clone();
+            div().size_full().child(
+                div()
+                    .size(px(10.))
+                    .child(
+                        div()
+                            .size(px(10.))
+                            .bg(crate::red())
+                            .on_mouse_down(MouseButton::Left, move |_, _, _| {
+                                *presses.borrow_mut() += 1;
+                            })
+                            .with_paint_animation(
+                                "rise",
+                                Animation::new(Duration::from_secs(1)),
+                                |value| {
+                                    PaintEffect::translation(point(px(0.), px(40. * value)))
+                                        .with_opacity(1. - value)
+                                },
+                            ),
+                    )
+                    .with_paint_animation(
+                        "slide",
+                        Animation::new(Duration::from_secs(1)),
+                        |value| PaintEffect::translation(point(px(100. * value), px(0.))),
+                    ),
+            )
+        }
+    }
+
+    struct SlideRoot {
+        pane: Entity<SlideView>,
+    }
+
+    impl Render for SlideRoot {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                self.pane
+                    .clone()
+                    .cached(StyleRefinement::default().w_full().h(px(10.))),
+            )
+        }
+    }
+
+    /// Where the box is drawn, in logical pixels from the top left, and how opaque it is.
+    fn drawn_box(cx: &mut VisualTestContext) -> (f32, f32, f32) {
+        cx.update(|window, _| {
+            let scale_factor = window.scale_factor();
+            let boxes: Vec<_> = window
+                .rendered_frame
+                .scene
+                .quads
+                .iter()
+                .filter(|quad| quad.bounds.size.width.0 / scale_factor == 10.)
+                .map(|quad| {
+                    (
+                        quad.bounds.origin.x.0 / scale_factor,
+                        quad.bounds.origin.y.0 / scale_factor,
+                        quad.background.solid.a,
+                    )
+                })
+                .collect();
+            assert_eq!(boxes.len(), 1);
+            boxes[0]
+        })
+    }
+
+    fn next_frame(cx: &mut VisualTestContext, by: Duration) -> usize {
+        cx.executor().advance_clock(by);
+        let asked = cx.update(|window, cx| window.simulate_next_frame(cx));
+        cx.run_until_parked();
+        asked
+    }
+
+    #[gpui::test]
+    fn test_paint_animation_moves_what_it_paints_in_a_view_that_is_reused(cx: &mut TestAppContext) {
+        let renders = Rc::new(RefCell::new(0));
+        let presses = Rc::new(RefCell::new(0));
+        let (_, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            let presses = presses.clone();
+            move |_, cx| SlideRoot {
+                pane: cx.new(|_| SlideView { renders, presses }),
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert_eq!(*renders.borrow(), 1);
+        assert_eq!(drawn_box(cx), (0., 0., 1.));
+
+        // The two translations add up, and the opacities multiply, in each frame, and the
+        // cached view is not drawn again.
+        for step in 1..=4 {
+            assert_eq!(next_frame(cx, Duration::from_millis(250)), 1);
+            let value = step as f32 * 0.25;
+            let (x, y, alpha) = drawn_box(cx);
+            assert!(
+                (x - 100. * value).abs() < 0.01
+                    && (y - 40. * value).abs() < 0.01
+                    && (alpha - (1. - value)).abs() < 0.01,
+                "step {step}: {:?}",
+                (x, y, alpha)
+            );
+        }
+        assert_eq!(*renders.borrow(), 1, "the view isn't drawn again");
+
+        // The animations ended in that frame, at the end of the move, and nothing asks for more.
+        assert_eq!(next_frame(cx, Duration::from_millis(100)), 1);
+        assert_eq!(drawn_box(cx), (100., 40., 0.));
+        assert_eq!(next_frame(cx, Duration::from_millis(100)), 0);
+        assert_eq!(drawn_box(cx), (100., 40., 0.));
+
+        // Pressing hits the box where it was laid out, and not where it is drawn.
+        cx.simulate_mouse_down(
+            point(px(105.), px(45.)),
+            MouseButton::Left,
+            Modifiers::none(),
+        );
+        assert_eq!(*presses.borrow(), 0);
+        cx.simulate_mouse_down(point(px(5.), px(5.)), MouseButton::Left, Modifiers::none());
+        assert_eq!(*presses.borrow(), 1);
+    }
+
+    #[gpui::test]
+    fn test_a_translation_moves_with_a_view_that_draws_again(cx: &mut TestAppContext) {
+        let renders = Rc::new(RefCell::new(0));
+        let (root, cx) = cx.add_window_view({
+            let renders = renders.clone();
+            move |_, cx| SlideRoot {
+                pane: cx.new(|_| SlideView {
+                    renders,
+                    presses: Rc::default(),
+                }),
+            }
+        });
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        next_frame(cx, Duration::from_millis(500));
+        let before = drawn_box(cx);
+        assert!((before.0 - 50.).abs() < 0.01 && (before.1 - 20.).abs() < 0.01);
+
+        // The view draws, and the animations go on from where they were.
+        let pane = root.read_with(cx, |root, _| root.pane.clone());
+        pane.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(*renders.borrow(), 2);
+        let after = drawn_box(cx);
+        assert!(
+            (after.0 - before.0).abs() < 0.01 && (after.1 - before.1).abs() < 0.01,
+            "{before:?} {after:?}"
+        );
+        next_frame(cx, Duration::from_millis(250));
+        assert!((drawn_box(cx).0 - 75.).abs() < 0.01);
     }
 
     /// A view with a spinner of 10 pixels above its children, which are cached views.

@@ -5,6 +5,43 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## Unreleased (0.1.7)
+
+Not published yet.
+
+### Animation
+
+- `PaintEffect` has a `translation`, in logical pixels, that moves everything an element paints
+  (quads, shadows, underlines, paths, sprites and surfaces). A paint animation can now slide an
+  element without drawing the view it is in. `PaintEffect::translation` makes one, and
+  `with_opacity`, `with_rotation` and `with_translation` combine the three, so an element can
+  fade as it moves. A rotation turns sprites about the element's centre first and the translation
+  moves them after. The translations of nested elements add up.
+- An effect changes what is painted. Hitboxes, bounds and focus stay where the element was laid
+  out, and so does the clip it paints under. An element that slides out of its clip is cut by
+  it, and shows again when a later frame moves it back.
+- `Scene::push_effect` takes the window's scale factor as a third argument. `PaintEffect` has a
+  new public field, so a struct literal needs `..PaintEffect::NONE`.
+- Springs step by the time of the frame being drawn. They read the real clock when laid out,
+  while paint animations and synced animations go by the frame's time. Under a test executor with
+  its own clock, a spring stepped by the few microseconds between two draws, which rounds to no
+  movement on a fast machine. Every spring in a frame now moves by the same amount, and tests can
+  drive springs with `advance_clock`.
+
+### Macros
+
+- The test of the package-name lookup writes each made-up manifest to a folder of its own.
+  `proc-macro-crate` caches an answer by the manifest's path and modification time, and on Windows
+  a manifest rewritten within one tick of the file clock read as unchanged.
+
+### Test support
+
+- The tests of `mhr-bench-metrics` no longer depend on the machine. The page fault check maps its
+  own pages and turns huge pages off for them, because a 4 MiB vector faults in two or three times
+  with transparent huge pages on. The context switch check sleeps until it counts five switches,
+  because a sleep that ends before the thread is scheduled out is not one. The hardware counter
+  tests skip when Linux lists no description of an event, as some virtual machines do.
+
 ## 0.1.6
 
 Published as `mhr-gpui`, `mhr-gpui-macros`, `mhr-gpui-wgpu`, `mhr-gpui-linux`,

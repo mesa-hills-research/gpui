@@ -246,6 +246,19 @@ adds the same line.
   notifies no view. `mhr-gpui-apple`'s copies of `scene.rs` and `window.rs` under `vendor/gpui`
   follow them. The tests at the end of `animation.rs` and `scene.rs` cover it, and
   `crates/gpui_screenshot/tests/spinner_frames.rs` times a spinner in a pane of rows.
+- **Paint effects that move**, in `mhr-gpui`'s `src/scene.rs`, `src/window.rs` and
+  `src/elements/animation.rs`. `PaintEffect` gained a `translation` in logical pixels. `Scene`
+  adds the translations of the effects around a primitive and moves the primitive's bounds by
+  them: `bounds` of every kind, `element_bounds` of a shadow and the vertices of a path. A sprite
+  that has a transformation, which a rotation already turned, gets the translation in the
+  transformation, applied after the rotation, so a nested effect's matrices compose exactly. The
+  content mask of a primitive stays. Culling and the draw order use the place a primitive is
+  drawn at, and a primitive that an effect hides is kept in the paint operations, so a cached view
+  that replays them with another translation shows it. `Scene::push_effect` takes the window's
+  scale factor to scale the translation, and the two callers in `window.rs` pass it.
+  `mhr-gpui-apple`'s copies of `scene.rs` and `window.rs` under `vendor/gpui` follow them. The
+  tests at the end of `scene.rs` and `animation.rs` cover it, among them a cached view that
+  replays a nested slide frame after frame.
 - **Cached list items of measured height**, in `mhr-gpui`'s `src/view.rs`, `src/element.rs` and
   `src/window.rs`. `Entity::cached_measured` and `AnyView::cached_measured` embed a view that
   takes the height it measured, where `cached` takes its size from a style. `Drawable::layout_as_root`
