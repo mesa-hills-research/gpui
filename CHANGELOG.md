@@ -5,9 +5,12 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
-## Unreleased (0.1.7)
+## 0.1.7
 
-Not published yet.
+Published as `mhr-gpui`, `mhr-gpui-macros`, `mhr-gpui-wgpu`, `mhr-gpui-linux`,
+`mhr-gpui-windows`, `mhr-gpui-macos`, `mhr-gpui-apple`, `mhr-gpui-web`, `mhr-gpui-platform` and
+`mhr-gpui-screenshot`, the same ten as 0.1.6. They pin each other exactly, so an app that uses
+several of them gets them all at 0.1.7. The other crates stay at 0.1.0.
 
 ### Animation
 
