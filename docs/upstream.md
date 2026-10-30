@@ -343,17 +343,13 @@ adds the same line.
   The mapping happens in `KeyBinding::load`, so a binding keeps the keys it was loaded with after a
   layout change, and an app loads its keymap again from `App::on_keyboard_layout_change`.
 - **Tests and examples that build**, in the `Cargo.toml` of `mhr-gpui`, `mhr-gpui-wgpu`,
-  `mhr-gpui-web`, `mhr-gpui-macos`, `mhr-gpui-macros`, `mhr-sum-tree` and `mhr-zlog`, and in
-  `mhr-gpui`'s `src/randomized_element_tree.rs`. The release tooling leaves out
-  `[dev-dependencies]`, so these crates' tests didn't build. Each crate has the dev-dependencies its
-  tests use again, as in Zed.
+  `mhr-gpui-web`, `mhr-gpui-macos`, `mhr-gpui-macros`, `mhr-sum-tree` and `mhr-zlog`. The release
+  tooling leaves out `[dev-dependencies]`, so these crates' tests didn't build. Each crate has the
+  dev-dependencies its tests use again, as in Zed.
   `mhr-gpui-macros` takes `gpui` by path without a version, so its published manifest leaves it
   out and a new `mhr-gpui` never forces a new `mhr-gpui-macros`. The workspace's `assets/fonts`
   holds the three fonts of Zed's `assets/fonts` that tests include (IBM Plex Sans Regular and Lilex
   Regular and Bold) with their licences. They sit outside every crate, so no package holds them.
-  Proptest 1 from crates.io can't expand `#[gpui::property_test]` where Zed's git revision of
-  proptest can, so `randomized_element_tree_matches_full_render` is a `#[gpui::test]` that runs the
-  same body for four seeds.
   The examples of `mhr-gpui` build with Zed's dev-dependencies for them again (`env_logger`,
   `lyon` with `extra`, `unicode-segmentation`, `mhr-gpui-platform` and `mhr-reqwest-client`). The
   last two are by path without a version, so the published manifest leaves them out.
@@ -381,6 +377,13 @@ adds the same line.
   `VisualTestContext::draw` sets the frame's time before it draws. `mhr-gpui-apple`'s copy of
   `window.rs` under `vendor/gpui` follows it. Tests at the end of `animation.rs` and `img.rs` cover
   it.
+- **Property tests with proptest from crates.io**, in `mhr-gpui-macros`' `src/property_test.rs`
+  and `Cargo.toml` and the workspace's `Cargo.toml`. `#[gpui::property_test]` gave proptest's
+  macro `proptest_path` as a string, as Zed's git revision of proptest takes it. Proptest 1.11's
+  macro has no `proptest_path`, and 1.12's takes a path, so the attribute expanded with neither.
+  It now gives a path, and the workspace asks for proptest 1.12. `mhr-gpui-macros` tests its
+  examples with `mhr-gpui`'s `test-support`, whose helpers the expansion calls.
+  `randomized_element_tree_matches_full_render` in `mhr-gpui` is a property test again, as in Zed.
 
 ## The mobile crate
 

@@ -320,7 +320,7 @@ pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 proc-macro2 = "1.0.93"
 profiling = "1"
 pollster = "0.4.0"
-proptest = { package = "proptest", version = "1", features = ["attr-macro"] }
+proptest = { package = "proptest", version = "1.12", features = ["attr-macro"] }
 proptest-derive = "0.8.0"
 prost = "0.14"
 prost-build = "0.14"

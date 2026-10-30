@@ -1,4 +1,3 @@
-// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{
     AnyElement, AppContext as _, Context, ElementId, Entity, Hsla, InteractiveElement, IntoElement,
     ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px,
@@ -1419,7 +1418,7 @@ mod tests {
         AnyWindowHandle, Background, BorderStyle, Bounds, ContentMask, Corners, Edges, Pixels,
         ScaledPixels, Size, TestAppContext, size,
     };
-    use rand::{RngCore as _, rngs::StdRng};
+    use proptest::prelude::*;
     use std::collections::BTreeSet;
 
     const ELEMENT_COUNT: usize = 64;
@@ -1646,11 +1645,11 @@ mod tests {
             .expect("randomized tree window should remain open until the case completes");
     }
 
-    // A seeded test and not `#[gpui::property_test]`, which proptest 1 from crates.io
-    // can't expand (Zed builds against a git revision of proptest).
-    #[gpui::test(iterations = 4)]
-    fn randomized_element_tree_matches_full_render(cx: &mut TestAppContext, mut rng: StdRng) {
-        let seed = rng.next_u64();
+    #[gpui::property_test(config = ProptestConfig {
+        cases: 4,
+        ..Default::default()
+    })]
+    fn randomized_element_tree_matches_full_render(cx: &mut TestAppContext, seed: u64) {
         for topology in 0..4 {
             let topology_seed = (seed & !3) | topology;
             let config = RandomizedElementTreeConfig::new(topology_seed, ELEMENT_COUNT)

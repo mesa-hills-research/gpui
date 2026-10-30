@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::{
@@ -107,7 +108,7 @@ impl Args {
         quote! {
             #errors
             #[::gpui::proptest::property_test(
-                proptest_path = "::gpui::proptest",
+                proptest_path = ::gpui::proptest,
                 config = #fixed_config,
                 #(#remaining_args,)*
             )]

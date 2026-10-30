@@ -37,4 +37,4 @@ workspace = true
 
 # Without a version, the published crate leaves this out, so it needs no release of mhr-gpui.
 [dev-dependencies]
-gpui = { path = "../gpui", package = "mhr-gpui", default-features = false, features = ["inspector"] }
+gpui = { path = "../gpui", package = "mhr-gpui", default-features = false, features = ["inspector", "test-support"] }
