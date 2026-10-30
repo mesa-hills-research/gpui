@@ -5,6 +5,37 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## 0.1.8
+
+Published as `mhr-gpui`, `mhr-gpui-macros`, `mhr-gpui-wgpu`, `mhr-gpui-linux`,
+`mhr-gpui-windows`, `mhr-gpui-macos`, `mhr-gpui-apple`, `mhr-gpui-web`, `mhr-gpui-platform` and
+`mhr-gpui-screenshot`, the same ten as 0.1.7. They pin each other exactly, so an app that uses
+several of them gets them all at 0.1.8. The other crates stay at 0.1.0.
+
+### Animation
+
+- `with_animation`, `with_animations` and the frames of animated images go by the time of the
+  frame being drawn, as springs and paint animations do. They read the real clock, so under a test
+  executor `advance_clock` didn't move them and a test had to sleep. Every animation in a frame is
+  now at the same point, and tests drive them all with `advance_clock`. Synced animations take the
+  frame's time too.
+- A one-shot animation ends in the frame drawn at its duration, so the next one of a chain starts
+  from that frame instead of one frame later.
+- An animation of no duration ends in its first frame. A one-shot draws its end and hands over to
+  the next one of a chain, and a repeating one draws its start and stops.
+- An image's loading element shows in the frame its timer asks for, under a test executor too.
+
+### Macros
+
+- `#[gpui::property_test]` expands with proptest from crates.io. It gave proptest's macro
+  `proptest_path` as a string, which neither proptest 1.11 nor 1.12 takes. It now gives a path,
+  and `mhr-gpui`'s `test-support` asks for proptest 1.12, the first release whose macro takes one.
+
+### Test support
+
+- `VisualTestContext::draw` sets the frame's time before it draws, so the animations it draws see
+  the time `advance_clock` moved to.
+
 ## 0.1.7
 
 Published as `mhr-gpui`, `mhr-gpui-macros`, `mhr-gpui-wgpu`, `mhr-gpui-linux`,
