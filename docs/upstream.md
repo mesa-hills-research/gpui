@@ -373,7 +373,9 @@ adds the same line.
   paint animations and synced animations go by the executor's. A test that moved the executor's
   clock with `advance_clock` saw them stand still, and had to sleep. They now go by the time of the
   frame being drawn, as springs and paint animations do, and so does the delay before an image
-  shows its loading element, which now shows in the frame its timer asks for.
+  shows its loading element, which now shows in the frame its timer asks for. A one-shot animation
+  ends in the frame drawn at its duration, so the next one of a chain starts from that frame, and
+  one of no duration ends as it starts, as a paint animation of no duration does.
   `VisualTestContext::draw` sets the frame's time before it draws. `mhr-gpui-apple`'s copy of
   `window.rs` under `vendor/gpui` follows it. Tests at the end of `animation.rs` and `img.rs` cover
   it.

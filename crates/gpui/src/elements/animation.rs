@@ -455,20 +455,27 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 (animation_ix, delta, true)
             } else {
                 let animation_ix = state.animation_ix;
-                let duration = self.animations[animation_ix].duration;
+                let animation = &self.animations[animation_ix];
+                let duration = animation.duration;
 
-                let elapsed = if self.animations[animation_ix].synced && !duration.is_zero() {
-                    let elapsed = now.saturating_duration_since(cx.synced_animation_epoch);
-                    // Reduce modulo the duration before f32 conversion, which loses sub-second precision at scale.
-                    Duration::from_nanos((elapsed.as_nanos() % duration.as_nanos()) as u64)
+                // An animation of no duration ends as it starts, as a paint
+                // animation of no duration does.
+                let mut delta = if duration.is_zero() {
+                    1.0
                 } else {
-                    now.saturating_duration_since(state.start)
+                    let elapsed = if animation.synced {
+                        let elapsed = now.saturating_duration_since(cx.synced_animation_epoch);
+                        // Reduce modulo the duration before f32 conversion, which loses sub-second precision at scale.
+                        Duration::from_nanos((elapsed.as_nanos() % duration.as_nanos()) as u64)
+                    } else {
+                        now.saturating_duration_since(state.start)
+                    };
+                    elapsed.as_secs_f32() / duration.as_secs_f32()
                 };
-                let mut delta = elapsed.as_secs_f32() / duration.as_secs_f32();
 
                 let mut done = false;
-                if delta > 1.0 {
-                    if self.animations[animation_ix].oneshot {
+                if animation.oneshot {
+                    if delta >= 1.0 {
                         if animation_ix >= self.animations.len() - 1 {
                             done = true;
                         } else {
@@ -476,9 +483,12 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                             state.animation_ix += 1;
                         }
                         delta = 1.0;
-                    } else {
-                        delta %= 1.0;
                     }
+                } else if duration.is_zero() {
+                    delta = 0.0;
+                    done = true;
+                } else if delta > 1.0 {
+                    delta %= 1.0;
                 }
                 (animation_ix, delta, done)
             };
@@ -1301,8 +1311,10 @@ mod tests {
         assert_eq!(*rendered_deltas.borrow(), vec![0.0]);
     }
 
-    /// Two one-shot animations of a second each, one after the other.
+    /// Animations that run one after the other, recording the stage and value
+    /// each frame draws.
     struct ChainedAnimationView {
+        animations: Vec<Animation>,
         rendered: Rc<RefCell<Vec<(usize, f32)>>>,
     }
 
@@ -1311,10 +1323,7 @@ mod tests {
             let rendered = self.rendered.clone();
             div().size_full().child(div().with_animations(
                 "chained-animation",
-                vec![
-                    Animation::new(Duration::from_secs(1)),
-                    Animation::new(Duration::from_secs(1)),
-                ],
+                self.animations.clone(),
                 move |this, ix, delta| {
                     rendered.borrow_mut().push((ix, delta));
                     this
@@ -1323,22 +1332,43 @@ mod tests {
         }
     }
 
-    #[gpui::test]
-    fn test_animations_follow_the_executor_clock(cx: &mut TestAppContext) {
+    /// A window that runs `animations` one after the other, and a function
+    /// that moves the clock by its argument and draws the next frame. That
+    /// function returns how many frames the previous draw asked for, and the
+    /// stage and value (to two places) of the frame drawn last.
+    fn open_chain(
+        cx: &mut TestAppContext,
+        animations: Vec<Animation>,
+    ) -> impl FnMut(Duration) -> (usize, usize, f32) + '_ {
         let rendered = Rc::new(RefCell::new(Vec::new()));
         let window = cx.open_window(size(px(100.), px(100.)), {
             let rendered = rendered.clone();
-            move |_, _| ChainedAnimationView { rendered }
+            move |_, _| ChainedAnimationView {
+                animations,
+                rendered,
+            }
         });
         cx.run_until_parked();
-        let mut frame_after = |elapsed: Duration| {
-            cx.executor().advance_clock(elapsed);
-            let frames_asked_for = simulate_next_frame(&window, cx);
+        let mut frames_asked_for = 0;
+        move |elapsed: Duration| {
+            if !elapsed.is_zero() {
+                cx.executor().advance_clock(elapsed);
+                frames_asked_for = simulate_next_frame(&window, cx);
+            }
             let (ix, delta) = *rendered.borrow().last().unwrap();
             (frames_asked_for, ix, (delta * 100.0).round() / 100.0)
-        };
+        }
+    }
 
-        assert_eq!(*rendered.borrow(), vec![(0, 0.0)]);
+    fn seconds(seconds: f32) -> Animation {
+        Animation::new(Duration::from_secs_f32(seconds))
+    }
+
+    #[gpui::test]
+    fn test_animations_follow_the_executor_clock(cx: &mut TestAppContext) {
+        let mut frame_after = open_chain(cx, vec![seconds(1.), seconds(1.)]);
+
+        assert_eq!(frame_after(Duration::ZERO), (0, 0, 0.0));
         assert_eq!(frame_after(Duration::from_millis(400)), (1, 0, 0.4));
         // The first animation ends, and the second starts from that frame.
         assert_eq!(frame_after(Duration::from_millis(700)), (1, 0, 1.0));
@@ -1346,6 +1376,36 @@ mod tests {
         assert_eq!(frame_after(Duration::from_millis(800)), (1, 1, 1.0));
         // The last animation has ended, so no frame asks for another.
         assert_eq!(frame_after(Duration::from_millis(100)), (0, 1, 1.0));
+    }
+
+    #[gpui::test]
+    fn test_a_stage_ends_in_the_frame_drawn_at_its_duration(cx: &mut TestAppContext) {
+        let mut frame_after = open_chain(cx, vec![seconds(1.), seconds(1.)]);
+
+        assert_eq!(frame_after(Duration::from_secs(1)), (1, 0, 1.0));
+        assert_eq!(frame_after(Duration::from_millis(250)), (1, 1, 0.25));
+        assert_eq!(frame_after(Duration::from_millis(750)), (1, 1, 1.0));
+        assert_eq!(frame_after(Duration::from_millis(100)), (0, 1, 1.0));
+    }
+
+    #[gpui::test]
+    fn test_animations_of_no_duration_end_as_they_start(cx: &mut TestAppContext) {
+        {
+            let mut frame_after = open_chain(cx, vec![seconds(0.)]);
+            assert_eq!(frame_after(Duration::ZERO), (0, 0, 1.0));
+            assert_eq!(frame_after(Duration::from_millis(100)), (0, 0, 1.0));
+        }
+        {
+            // A stage of no duration hands over to the next in one frame.
+            let mut frame_after = open_chain(cx, vec![seconds(0.), seconds(1.)]);
+            assert_eq!(frame_after(Duration::ZERO), (0, 0, 1.0));
+            assert_eq!(frame_after(Duration::from_millis(250)), (1, 1, 0.25));
+        }
+        // A repeating one draws its start, as a paint animation of no
+        // duration does.
+        let mut frame_after = open_chain(cx, vec![seconds(0.).repeat()]);
+        assert_eq!(frame_after(Duration::ZERO), (0, 0, 0.0));
+        assert_eq!(frame_after(Duration::from_millis(100)), (0, 0, 0.0));
     }
 
     /// A view with a spinner that turns with a paint animation.
