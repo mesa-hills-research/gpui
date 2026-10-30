@@ -439,8 +439,9 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         cx: &mut App,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         window.with_element_state(global_id.unwrap(), |state, window| {
+            let now = window.frame_time().now;
             let mut state = state.unwrap_or_else(|| AnimationState {
-                start: Instant::now(),
+                start: now,
                 animation_ix: 0,
                 delayed_frame_pending: Rc::new(Cell::new(false)),
             });
@@ -457,11 +458,11 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                 let duration = self.animations[animation_ix].duration;
 
                 let elapsed = if self.animations[animation_ix].synced && !duration.is_zero() {
-                    let elapsed = cx.background_executor().now() - cx.synced_animation_epoch;
+                    let elapsed = now.saturating_duration_since(cx.synced_animation_epoch);
                     // Reduce modulo the duration before f32 conversion, which loses sub-second precision at scale.
                     Duration::from_nanos((elapsed.as_nanos() % duration.as_nanos()) as u64)
                 } else {
-                    state.start.elapsed()
+                    now.saturating_duration_since(state.start)
                 };
                 let mut delta = elapsed.as_secs_f32() / duration.as_secs_f32();
 
@@ -471,7 +472,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
                         if animation_ix >= self.animations.len() - 1 {
                             done = true;
                         } else {
-                            state.start = Instant::now();
+                            state.start = now;
                             state.animation_ix += 1;
                         }
                         delta = 1.0;
@@ -1298,6 +1299,53 @@ mod tests {
 
         assert_eq!(simulate_next_frame(&window, cx), 0);
         assert_eq!(*rendered_deltas.borrow(), vec![0.0]);
+    }
+
+    /// Two one-shot animations of a second each, one after the other.
+    struct ChainedAnimationView {
+        rendered: Rc<RefCell<Vec<(usize, f32)>>>,
+    }
+
+    impl Render for ChainedAnimationView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let rendered = self.rendered.clone();
+            div().size_full().child(div().with_animations(
+                "chained-animation",
+                vec![
+                    Animation::new(Duration::from_secs(1)),
+                    Animation::new(Duration::from_secs(1)),
+                ],
+                move |this, ix, delta| {
+                    rendered.borrow_mut().push((ix, delta));
+                    this
+                },
+            ))
+        }
+    }
+
+    #[gpui::test]
+    fn test_animations_follow_the_executor_clock(cx: &mut TestAppContext) {
+        let rendered = Rc::new(RefCell::new(Vec::new()));
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let rendered = rendered.clone();
+            move |_, _| ChainedAnimationView { rendered }
+        });
+        cx.run_until_parked();
+        let mut frame_after = |elapsed: Duration| {
+            cx.executor().advance_clock(elapsed);
+            let frames_asked_for = simulate_next_frame(&window, cx);
+            let (ix, delta) = *rendered.borrow().last().unwrap();
+            (frames_asked_for, ix, (delta * 100.0).round() / 100.0)
+        };
+
+        assert_eq!(*rendered.borrow(), vec![(0, 0.0)]);
+        assert_eq!(frame_after(Duration::from_millis(400)), (1, 0, 0.4));
+        // The first animation ends, and the second starts from that frame.
+        assert_eq!(frame_after(Duration::from_millis(700)), (1, 0, 1.0));
+        assert_eq!(frame_after(Duration::from_millis(250)), (1, 1, 0.25));
+        assert_eq!(frame_after(Duration::from_millis(800)), (1, 1, 1.0));
+        // The last animation has ended, so no frame asks for another.
+        assert_eq!(frame_after(Duration::from_millis(100)), (0, 1, 1.0));
     }
 
     /// A view with a spinner that turns with a paint animation.

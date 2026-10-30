@@ -371,6 +371,16 @@ adds the same line.
   the macros use it where proc-macro-crate returns the key `mhr_gpui_kit`. `test = false` is gone
   from the crate's `Cargo.toml`, so its unit tests run, and one of them reads the manifests of
   made-up apps.
+- **Animations on the executor's clock**, in `mhr-gpui`'s `src/elements/animation.rs`,
+  `src/elements/img.rs`, `src/window.rs` and `src/app/test_context.rs`. `with_animation`,
+  `with_animations` and the frames of animated images went by the real clock, while springs,
+  paint animations and synced animations go by the executor's. A test that moved the executor's
+  clock with `advance_clock` saw them stand still, and had to sleep. They now go by the time of the
+  frame being drawn, as springs and paint animations do, and so does the delay before an image
+  shows its loading element, which now shows in the frame its timer asks for.
+  `VisualTestContext::draw` sets the frame's time before it draws. `mhr-gpui-apple`'s copy of
+  `window.rs` under `vendor/gpui` follows it. Tests at the end of `animation.rs` and `img.rs` cover
+  it.
 
 ## The mobile crate
 

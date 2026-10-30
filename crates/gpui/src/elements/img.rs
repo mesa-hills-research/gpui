@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{
     AnyElement, AnyImageCache, App, Asset, AssetLogger, Bounds, DefiniteLength, Element, ElementId,
     Entity, GlobalElementId, Hitbox, Image, ImageCache, InspectorElementId, InteractiveElement,
@@ -320,7 +321,7 @@ impl Element for Img {
                                 state.frame_index = state.frame_index.min(max_frame_index);
                                 if frame_count > 1 && !cx.reduce_motion() {
                                     if window.is_window_active() {
-                                        let current_time = Instant::now();
+                                        let current_time = window.frame_time().now;
                                         if let Some(last_frame_time) = state.last_frame_time {
                                             let elapsed = current_time - last_frame_time;
                                             let frame_duration =
@@ -400,7 +401,11 @@ impl Element for Img {
                         None => {
                             if let Some(state) = &mut state {
                                 if let Some((started_loading, _)) = state.started_loading {
-                                    if started_loading.elapsed() > LOADING_DELAY
+                                    if window
+                                        .frame_time()
+                                        .now
+                                        .saturating_duration_since(started_loading)
+                                        >= LOADING_DELAY
                                         && let Some(loading) = self.style.loading.as_ref()
                                     {
                                         let mut element = loading();
@@ -416,7 +421,7 @@ impl Element for Img {
                                         })
                                         .ok();
                                     });
-                                    state.started_loading = Some((Instant::now(), task));
+                                    state.started_loading = Some((window.frame_time().now, task));
                                 }
                             }
                         }
@@ -802,8 +807,15 @@ impl From<image::ImageError> for ImageCacheError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ParentElement as _, TestAppContext, canvas, div, point, px, size};
-    use image::{Frame, ImageBuffer, Rgba};
+    use crate::{
+        Context, ParentElement as _, Render, TestAppContext, WindowHandle, canvas, div, point, px,
+        size,
+    };
+    use image::{Delay, Frame, ImageBuffer, Rgba};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+    };
 
     const TEST_IMG_ID: &str = "test-img";
 
@@ -812,6 +824,16 @@ mod tests {
         Arc::new(RenderImage::new(SmallVec::from_iter(
             (0..frame_count).map(|_| frame.clone()),
         )))
+    }
+
+    fn animated_test_image(frame_count: usize, frame_delay_ms: u32) -> Arc<RenderImage> {
+        let frame = Frame::from_parts(
+            ImageBuffer::from_pixel(1, 1, Rgba([0, 0, 0, 0])),
+            0,
+            0,
+            Delay::from_numer_denom_ms(frame_delay_ms, 1),
+        );
+        Arc::new(RenderImage::new(SmallVec::from_elem(frame, frame_count)))
     }
 
     fn test_image_with_size(width: u32, height: u32) -> Arc<RenderImage> {
@@ -959,6 +981,100 @@ mod tests {
             )
         });
         assert_eq!(corner_radius, Some(expected_corner_radius));
+    }
+
+    /// A view of an image that records the frame of the image each draw shows, and whether
+    /// the image's loading element was shown.
+    struct ImageView {
+        source: ImageSource,
+        frame_indices: Rc<RefCell<Vec<usize>>>,
+        loading_shown: Rc<Cell<bool>>,
+    }
+
+    impl Render for ImageView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            let frame_indices = self.frame_indices.clone();
+            let loading_shown = self.loading_shown.clone();
+            div()
+                .child(
+                    img(self.source.clone())
+                        .with_loading(move || {
+                            loading_shown.set(true);
+                            div().into_any_element()
+                        })
+                        .id(TEST_IMG_ID),
+                )
+                .child(canvas(
+                    |_, _, _| (),
+                    move |_, _, window, _| {
+                        window.with_global_id(TEST_IMG_ID.into(), |id, window| {
+                            window.with_element_state::<ImgState, _>(id, |state, _| {
+                                let state = state.expect("img state should be initialized");
+                                frame_indices.borrow_mut().push(state.frame_index);
+                                ((), state)
+                            });
+                        });
+                    },
+                ))
+        }
+    }
+
+    fn open_image_window(
+        cx: &mut TestAppContext,
+        source: ImageSource,
+    ) -> (
+        WindowHandle<ImageView>,
+        Rc<RefCell<Vec<usize>>>,
+        Rc<Cell<bool>>,
+    ) {
+        let frame_indices = Rc::<RefCell<Vec<usize>>>::default();
+        let loading_shown = Rc::<Cell<bool>>::default();
+        let window = cx.open_window(size(px(100.), px(100.)), {
+            let frame_indices = frame_indices.clone();
+            let loading_shown = loading_shown.clone();
+            move |_, _| ImageView {
+                source,
+                frame_indices,
+                loading_shown,
+            }
+        });
+        cx.run_until_parked();
+        (window, frame_indices, loading_shown)
+    }
+
+    #[gpui::test]
+    fn animated_image_follows_the_executor_clock(cx: &mut TestAppContext) {
+        let (window, frame_indices, _) =
+            open_image_window(cx, ImageSource::Render(animated_test_image(3, 100)));
+        // An image animates only in the active window.
+        window
+            .update(cx, |_, window, _| window.activate_window())
+            .unwrap();
+        cx.run_until_parked();
+        let mut frame_index_after = |elapsed: Duration| {
+            cx.executor().advance_clock(elapsed);
+            window
+                .update(cx, |_, window, cx| window.simulate_next_frame(cx))
+                .unwrap();
+            cx.run_until_parked();
+            *frame_indices.borrow().last().unwrap()
+        };
+
+        assert_eq!(frame_index_after(Duration::ZERO), 0);
+        assert_eq!(frame_index_after(Duration::from_millis(60)), 0);
+        assert_eq!(frame_index_after(Duration::from_millis(60)), 1);
+        assert_eq!(frame_index_after(Duration::from_millis(100)), 2);
+    }
+
+    #[gpui::test]
+    fn loading_element_shows_after_the_loading_delay(cx: &mut TestAppContext) {
+        let (_, _, loading_shown) =
+            open_image_window(cx, ImageSource::Custom(Arc::new(|_, _| None)));
+        assert!(!loading_shown.get());
+
+        cx.executor().advance_clock(LOADING_DELAY);
+        cx.run_until_parked();
+        assert!(loading_shown.get());
     }
 
     #[gpui::test]

@@ -1,9 +1,10 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{
     Action, AnyView, AnyWindowHandle, App, AppCell, AppContext, AsyncApp, AvailableSpace,
     BackgroundExecutor, BorrowAppContext, Bounds, Capslock, ClipboardItem, DrawPhase, Drawable,
-    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke,
-    Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
+    Element, Empty, EntityId, EventEmitter, ForegroundExecutor, FrameTime, Global, InputEvent,
+    Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Platform, PlatformTextSystem, Point, Render, Result, SharedString, Size,
     SystemNotification, SystemNotificationResponse, Task, TestDispatcher, TestPlatform,
     TestScreenCaptureSource, TestWindow, TextSystem, VisualContext, Window, WindowBounds,
     WindowHandle, WindowOptions, WindowVisibility, app::GpuiMode, window::ElementArenaScope,
@@ -1004,6 +1005,7 @@ impl VisualTestContext {
         self.update(|window, cx| {
             let arena_scope = ElementArenaScope::enter(&cx.element_arena);
 
+            window.frame_time = FrameTime::current(cx);
             window.invalidator.set_phase(DrawPhase::Prepaint);
             let mut element = Drawable::new(f(window, cx));
             element.layout_as_root(space.into(), window, cx);

@@ -1151,6 +1151,18 @@ pub(crate) struct FrameTime {
     pub(crate) reduce_motion: bool,
 }
 
+impl FrameTime {
+    /// The time of a frame drawn now, by the executor's clock, which tests move with
+    /// `advance_clock`.
+    pub(crate) fn current(cx: &App) -> Self {
+        Self {
+            now: cx.background_executor().now(),
+            epoch: cx.synced_animation_epoch,
+            reduce_motion: cx.reduce_motion(),
+        }
+    }
+}
+
 /// An element that painted with an animated effect, kept in the frame so that a view that is
 /// reused paints the effect again, at the time of the frame that reuses it.
 #[derive(Clone)]
@@ -1422,7 +1434,7 @@ pub struct Window {
     /// to lay out at to know whether the height it remembered still holds.
     pub(crate) pending_root_space: Option<Size<AvailableSpace>>,
     /// The time the frame being drawn is drawn at.
-    frame_time: FrameTime,
+    pub(crate) frame_time: FrameTime,
     /// A timer that draws the window when the next frame of a throttled paint animation is due.
     paint_effect_timer: Option<Task<()>>,
     /// Whether a frame is already asked for to draw the next step of the paint animations.
@@ -2326,11 +2338,7 @@ impl Window {
             long_press_capture: None,
             refreshing: false,
             pending_root_space: None,
-            frame_time: FrameTime {
-                now: cx.background_executor().now(),
-                epoch: cx.synced_animation_epoch,
-                reduce_motion: cx.reduce_motion(),
-            },
+            frame_time: FrameTime::current(cx),
             paint_effect_timer: None,
             paint_effect_frame_pending: Rc::default(),
             frame_number: 1,
@@ -3554,11 +3562,7 @@ impl Window {
         self.invalidate_entities();
         cx.entities.clear_accessed();
         debug_assert!(self.rendered_entity_stack.is_empty());
-        self.frame_time = FrameTime {
-            now: cx.background_executor().now(),
-            epoch: cx.synced_animation_epoch,
-            reduce_motion: cx.reduce_motion(),
-        };
+        self.frame_time = FrameTime::current(cx);
         self.invalidator.set_dirty(false);
         self.requested_autoscroll = None;
 
