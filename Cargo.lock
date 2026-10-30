@@ -3514,7 +3514,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3595,7 +3595,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-apple"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "async-task",
@@ -3623,7 +3623,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-linux"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -3666,7 +3666,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-macos"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3754,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-platform"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3768,7 +3768,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-screenshot"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "base64",
@@ -3813,7 +3813,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-web"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3840,7 +3840,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-wgpu"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3868,7 +3868,7 @@ dependencies = [
 
 [[package]]
 name = "mhr-gpui-windows"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "accesskit",
  "accesskit_windows",

@@ -110,9 +110,13 @@ same goes for 0.1.4 and 0.1.5. Version 0.1.6 covers ten, since `mhr-gpui-macros`
 `mhr-gpui` pins it, and `mhr-gpui-screenshot` was published for the first time and pins `mhr-gpui`
 and `mhr-gpui-wgpu`. Version 0.1.7 covers the same ten, since `mhr-gpui`, `mhr-gpui-apple`
 and `mhr-gpui-macros` changed and the rest pin `mhr-gpui`. So does 0.1.8, for the same reasons.
+Version 0.1.9 covers nine, since only `mhr-gpui` changed and the other eight pin it.
+`mhr-gpui-macros` pins nothing that changed, so it stays at 0.1.8 and the others pin it there.
 The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
 `git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
-the release by name, since cargo refuses a version that's already on crates.io:
+the release by name, since cargo refuses a version that's already on crates.io. The command below
+names all ten, so leave out `-p mhr-gpui-macros` for a release such as 0.1.9 that doesn't change
+it:
 
 ```sh
 packages="-p mhr-gpui-macros -p mhr-gpui -p mhr-gpui-wgpu -p mhr-gpui-linux -p mhr-gpui-windows \
