@@ -1,10 +1,11 @@
 // Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{
     ActiveTooltip, AnyView, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size, TextOverflow,
-    TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
-    WrappedLineLayout, register_tooltip_mouse_handlers, set_tooltip_on_window,
+    GlyphColors, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement,
+    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextOverflow, TextRun, TextStyle, TooltipId, TruncateFrom, WhiteSpace, Window, WrappedLine,
+    WrappedLineLayout, register_tooltip_mouse_handlers, resolve_glyph_colors,
+    set_tooltip_on_window,
 };
 use anyhow::Context as _;
 use gpui_util::ResultExt;
@@ -830,7 +831,7 @@ impl TextLayout {
     }
 
     fn paint(&self, text: &str, window: &mut Window, cx: &mut App) {
-        self.paint_lines(TextPaintPass::All, window, cx)
+        self.paint_lines(TextPaintPass::All, &[], window, cx)
             .with_context(|| format!("failed to paint {text}"))
             .unwrap();
     }
@@ -839,17 +840,41 @@ impl TextLayout {
     /// content, such as highlights, between the backgrounds and the text. Follow it with
     /// [`Self::paint_foreground`] to paint the glyphs.
     pub fn paint_background(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
-        self.paint_lines(TextPaintPass::Background, window, cx)
+        self.paint_lines(TextPaintPass::Background, &[], window, cx)
     }
 
     /// Paints the glyphs and decorations of the text without the run backgrounds.
     pub fn paint_foreground(&self, window: &mut Window, cx: &mut App) -> anyhow::Result<()> {
-        self.paint_lines(TextPaintPass::Foreground, window, cx)
+        self.paint_lines(TextPaintPass::Foreground, &[], window, cx)
     }
 
+    /// Paints the glyphs and decorations of the text like [`Self::paint_foreground`], with the
+    /// glyphs in each of `colors`' ranges in its color. The ranges are UTF-8 byte offsets into
+    /// the whole text as laid out, counting the newline between two lines as one byte. Where
+    /// ranges overlap, the later one wins. An empty or reversed range colors nothing, and neither
+    /// does the part of a range past the end of the text. A glyph that draws several characters,
+    /// such as a ligature, takes the color of its first one, and color emoji keep their own
+    /// colors.
+    ///
+    /// Only the glyphs change color. Underlines, strikethroughs and run backgrounds keep the
+    /// colors of their runs, and the text is painted from its layout as it is, so this never
+    /// shapes the text again and the text keeps its widths and wrapping.
+    pub fn paint_foreground_with_colors(
+        &self,
+        colors: &[(Range<usize>, Hsla)],
+        window: &mut Window,
+        cx: &mut App,
+    ) -> anyhow::Result<()> {
+        let colors = resolve_glyph_colors(colors);
+        self.paint_lines(TextPaintPass::Foreground, &colors, window, cx)
+    }
+
+    /// Paints the lines for `pass`, with the glyph colors of `colors`, which are sorted by start
+    /// and don't overlap.
     fn paint_lines(
         &self,
         pass: TextPaintPass,
+        colors: &[(Range<usize>, Hsla)],
         window: &mut Window,
         cx: &mut App,
     ) -> anyhow::Result<()> {
@@ -863,6 +888,7 @@ impl TextLayout {
 
         let line_height = element_state.line_height;
         let mut line_origin = bounds.origin;
+        let mut line_start = 0;
         let text_style = window.text_style();
         for line in &element_state.lines {
             if matches!(pass, TextPaintPass::All | TextPaintPass::Background) {
@@ -876,18 +902,24 @@ impl TextLayout {
                 )
                 .log_err();
             }
+            let line_end = line_start + line.len();
             if matches!(pass, TextPaintPass::All | TextPaintPass::Foreground) {
-                line.paint(
+                let first = colors.partition_point(|(range, _)| range.end <= line_start);
+                let last = colors.partition_point(|(range, _)| range.start < line_end);
+                line.paint_with_glyph_colors(
                     line_origin,
                     line_height,
                     text_style.text_align,
                     Some(bounds),
+                    GlyphColors::new(&colors[first..last], line_start),
                     window,
                     cx,
                 )
                 .log_err();
             }
             line_origin.y += line.size(line_height).height;
+            // Lines are split at a newline, which is one byte.
+            line_start = line_end + 1;
         }
         Ok(())
     }
@@ -1350,9 +1382,14 @@ impl IntoElement for InteractiveText {
 mod tests {
     use super::*;
     use crate::{
-        AvailableSpace, Context, InteractiveElement as _, ParentElement as _, Render, Styled as _,
-        TestAppContext, div, px, relative, size, window::DrawPhase,
+        AppContext as _, AvailableSpace, Background, Context, DevicePixels, FontId, FontRun,
+        GlyphId, InteractiveElement as _, LineLayout, NoopTextSystem, PaddedBool32,
+        ParentElement as _, PlatformTextSystem, Render, RenderGlyphParams, ScaledPixels,
+        ShapedGlyph, ShapedRun, StrikethroughStyle, Styled as _, TestAppContext, UnderlineStyle,
+        WindowHandle, black, blue, div, green, hsla, point, px, red, relative, size,
+        window::DrawPhase, yellow,
     };
+    use std::sync::atomic::{self, AtomicUsize};
 
     const SENTENCE: &str = "one two three four five six";
 
@@ -1544,6 +1581,539 @@ mod tests {
         cx.run_until_parked();
         let wide = cx.debug_bounds("message").expect("message is drawn");
         assert_eq!(wide.size.width, natural);
+    }
+
+    /// The glyph a [`LigatureTextSystem`] draws for "fi".
+    const FI_LIGATURE: GlyphId = GlyphId(1);
+
+    /// A text system whose font draws "fi" as one glyph narrower than the two letters, as fonts
+    /// with ligatures do, when both letters are in one font run. Every other character is a
+    /// glyph 8px wide whose id is the character, and Hebrew words come from right to left,
+    /// against byte order. It counts the lines it shapes, and rasterizes each glyph as wide as
+    /// its id, so a test can tell which glyph a sprite draws.
+    #[derive(Default)]
+    struct LigatureTextSystem {
+        shaped: AtomicUsize,
+    }
+
+    impl PlatformTextSystem for LigatureTextSystem {
+        fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> anyhow::Result<()> {
+            NoopTextSystem.add_fonts(fonts)
+        }
+
+        fn all_font_names(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn font_id(&self, descriptor: &crate::Font) -> anyhow::Result<FontId> {
+            NoopTextSystem.font_id(descriptor)
+        }
+
+        fn font_metrics(&self, font_id: FontId) -> crate::FontMetrics {
+            NoopTextSystem.font_metrics(font_id)
+        }
+
+        fn typographic_bounds(
+            &self,
+            font_id: FontId,
+            glyph_id: GlyphId,
+        ) -> anyhow::Result<Bounds<f32>> {
+            NoopTextSystem.typographic_bounds(font_id, glyph_id)
+        }
+
+        fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> anyhow::Result<Size<f32>> {
+            NoopTextSystem.advance(font_id, glyph_id)
+        }
+
+        fn glyph_for_char(&self, _font_id: FontId, ch: char) -> Option<GlyphId> {
+            Some(GlyphId(ch as u32))
+        }
+
+        fn glyph_raster_bounds(
+            &self,
+            params: &RenderGlyphParams,
+        ) -> anyhow::Result<Bounds<DevicePixels>> {
+            Ok(Bounds::new(
+                point(DevicePixels(0), DevicePixels(-8)),
+                size(DevicePixels(params.glyph_id.0 as i32), DevicePixels(1)),
+            ))
+        }
+
+        fn rasterize_glyph(
+            &self,
+            _params: &RenderGlyphParams,
+            raster_bounds: Bounds<DevicePixels>,
+        ) -> anyhow::Result<(Size<DevicePixels>, Vec<u8>)> {
+            let bytes = (raster_bounds.size.width.0 * raster_bounds.size.height.0) as usize;
+            Ok((raster_bounds.size, vec![0; bytes]))
+        }
+
+        fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+            self.shaped.fetch_add(1, atomic::Ordering::SeqCst);
+            let mut x = px(0.);
+            let mut run_start = 0;
+            let mut shaped_runs = Vec::new();
+            for run in runs {
+                // Each glyph in byte order, with its advance and whether it's Hebrew.
+                let mut logical = Vec::new();
+                let mut chars = text[run_start..run_start + run.len]
+                    .char_indices()
+                    .peekable();
+                while let Some((ix, ch)) = chars.next() {
+                    let (id, advance) =
+                        if ch == 'f' && chars.next_if(|(_, ch)| *ch == 'i').is_some() {
+                            (FI_LIGATURE, px(10.))
+                        } else {
+                            (GlyphId(ch as u32), px(8.))
+                        };
+                    let hebrew = ('\u{0590}'..='\u{05ff}').contains(&ch);
+                    logical.push((run_start + ix, id, advance, hebrew));
+                }
+                // Hebrew words read from right to left, so their glyphs come in reverse.
+                let mut glyphs = Vec::new();
+                for word in logical.chunk_by(|a, b| a.3 == b.3) {
+                    let in_order: Box<dyn Iterator<Item = _>> = if word[0].3 {
+                        Box::new(word.iter().rev())
+                    } else {
+                        Box::new(word.iter())
+                    };
+                    for &(index, id, advance, _) in in_order {
+                        glyphs.push(ShapedGlyph {
+                            id,
+                            position: point(x, px(0.)),
+                            index,
+                            is_emoji: false,
+                        });
+                        x += advance;
+                    }
+                }
+                shaped_runs.push(ShapedRun {
+                    font_id: run.font_id,
+                    glyphs,
+                });
+                run_start += run.len;
+            }
+            LineLayout {
+                font_size,
+                width: x,
+                ascent: px(12.),
+                descent: px(4.),
+                runs: shaped_runs,
+                len: text.len(),
+            }
+        }
+
+        fn recommended_rendering_mode(
+            &self,
+            font_id: FontId,
+            font_size: Pixels,
+        ) -> crate::TextRenderingMode {
+            NoopTextSystem.recommended_rendering_mode(font_id, font_size)
+        }
+    }
+
+    /// Draws `text` in `runs` in a box 72px wide, the glyphs in `colors` when there are some.
+    struct ColoredTextView {
+        text: SharedString,
+        runs: Vec<TextRun>,
+        colors: Option<Vec<(Range<usize>, Hsla)>>,
+        /// The layout drawn last.
+        layout: TextLayout,
+    }
+
+    impl Render for ColoredTextView {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let text = StyledText::new(self.text.clone()).with_runs(self.runs.clone());
+            self.layout = text.layout().clone();
+            div().w(px(72.)).child(ColoredText {
+                text,
+                colors: self.colors.clone(),
+            })
+        }
+    }
+
+    /// A `StyledText` painted with [`TextLayout::paint_foreground_with_colors`] when it has
+    /// colors, and as usual otherwise.
+    struct ColoredText {
+        text: StyledText,
+        colors: Option<Vec<(Range<usize>, Hsla)>>,
+    }
+
+    impl IntoElement for ColoredText {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
+
+    impl Element for ColoredText {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            window: &mut Window,
+            cx: &mut App,
+        ) -> (LayoutId, ()) {
+            self.text.request_layout(id, inspector_id, window, cx)
+        }
+
+        fn prepaint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            request_layout: &mut (),
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            self.text
+                .prepaint(id, inspector_id, bounds, request_layout, window, cx)
+        }
+
+        fn paint(
+            &mut self,
+            id: Option<&GlobalElementId>,
+            inspector_id: Option<&InspectorElementId>,
+            bounds: Bounds<Pixels>,
+            request_layout: &mut (),
+            prepaint: &mut (),
+            window: &mut Window,
+            cx: &mut App,
+        ) {
+            match &self.colors {
+                Some(colors) => {
+                    let layout = self.text.layout();
+                    layout.paint_background(window, cx).unwrap();
+                    layout
+                        .paint_foreground_with_colors(colors, window, cx)
+                        .unwrap();
+                }
+                None => self.text.paint(
+                    id,
+                    inspector_id,
+                    bounds,
+                    request_layout,
+                    prepaint,
+                    window,
+                    cx,
+                ),
+            }
+        }
+    }
+
+    /// What a frame of a [`ColoredTextView`] drew.
+    #[derive(Debug, PartialEq)]
+    struct DrawnText {
+        /// The glyph id, top, left and color of each glyph sprite, in reading order.
+        glyphs: Vec<(u32, f32, f32, Hsla)>,
+        /// The bounds, color and waviness of each underline and strikethrough.
+        lines: Vec<(Bounds<ScaledPixels>, Hsla, PaddedBool32)>,
+        /// The bounds and color of each run background.
+        backgrounds: Vec<(Bounds<ScaledPixels>, Background)>,
+    }
+
+    /// Draws `window` with `colors` and returns what it drew, with the shaped lines.
+    fn draw_with_colors(
+        window: WindowHandle<ColoredTextView>,
+        colors: Option<Vec<(Range<usize>, Hsla)>>,
+        cx: &mut TestAppContext,
+    ) -> (DrawnText, SmallVec<[Arc<WrappedLineLayout>; 1]>) {
+        window
+            .update(cx, |view, _, cx| {
+                view.colors = colors;
+                cx.notify();
+            })
+            .unwrap();
+        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))
+            .unwrap();
+        window
+            .update(cx, |view, window, _| {
+                let scene = &window.rendered_frame.scene;
+                let mut glyphs = scene
+                    .monochrome_sprites
+                    .iter()
+                    .map(|sprite| {
+                        (
+                            sprite.bounds.size.width.0 as u32,
+                            sprite.bounds.origin.y.0,
+                            sprite.bounds.origin.x.0,
+                            sprite.color,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                glyphs.sort_by(|a, b| (a.1, a.2).partial_cmp(&(b.1, b.2)).unwrap());
+                let drawn = DrawnText {
+                    glyphs,
+                    lines: scene
+                        .underlines
+                        .iter()
+                        .map(|line| (line.bounds, line.color, line.wavy))
+                        .collect(),
+                    backgrounds: scene
+                        .quads
+                        .iter()
+                        .map(|quad| (quad.bounds, quad.background))
+                        .collect(),
+                };
+                (drawn, view.layout.line_layouts())
+            })
+            .unwrap()
+    }
+
+    /// A run of `len` bytes in `color`.
+    fn plain_run(len: usize, color: Hsla) -> TextRun {
+        TextRun {
+            len,
+            font: crate::font("Ligatures"),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }
+    }
+
+    /// The color of each glyph of `lines`, in the order they are drawn: that of the last of
+    /// `colors` holding the glyph's first byte, or else that of its run.
+    fn expected_glyph_colors(
+        lines: &[Arc<WrappedLineLayout>],
+        runs: &[TextRun],
+        colors: &[(Range<usize>, Hsla)],
+    ) -> Vec<Hsla> {
+        let run_color = |ix: usize| {
+            let mut end = 0;
+            runs.iter()
+                .find(|run| {
+                    end += run.len;
+                    ix < end
+                })
+                .unwrap()
+                .color
+        };
+        let mut expected = Vec::new();
+        let mut line_start = 0;
+        for line in lines {
+            for glyph in line
+                .unwrapped_layout
+                .runs
+                .iter()
+                .flat_map(|run| &run.glyphs)
+            {
+                let ix = line_start + glyph.index;
+                expected.push(
+                    colors
+                        .iter()
+                        .rev()
+                        .find(|(range, _)| range.contains(&ix))
+                        .map_or_else(|| run_color(ix), |(_, color)| *color),
+                );
+            }
+            line_start += line.len() + 1;
+        }
+        expected
+    }
+
+    /// The colors of `glyphs`.
+    fn painted(glyphs: &[(u32, f32, f32, Hsla)]) -> Vec<Hsla> {
+        glyphs.iter().map(|glyph| glyph.3).collect()
+    }
+
+    /// The ids and places of `glyphs`.
+    fn placed(glyphs: &[(u32, f32, f32, Hsla)]) -> Vec<(u32, f32, f32)> {
+        glyphs
+            .iter()
+            .map(|(id, top, left, _)| (*id, *top, *left))
+            .collect()
+    }
+
+    #[test]
+    fn glyph_colors_paint_over_the_shaped_text_without_shaping_it_again() {
+        let text_system = Arc::new(LigatureTextSystem::default());
+        let mut cx = TestAppContext::build_with_text_system(
+            crate::TestDispatcher::new(0),
+            None,
+            text_system.clone(),
+        );
+        let cx = &mut cx;
+
+        // Plain text, an underlined link, a newline, text on a background and struck-out text.
+        let text = "fine fish fit\nfifty files";
+        let run = plain_run;
+        let runs = vec![
+            run(10, black()),
+            TextRun {
+                underline: Some(UnderlineStyle {
+                    thickness: px(1.),
+                    color: None,
+                    wavy: false,
+                }),
+                ..run(3, red())
+            },
+            run(1, black()),
+            TextRun {
+                background_color: Some(yellow()),
+                ..run(6, black())
+            },
+            TextRun {
+                strikethrough: Some(StrikethroughStyle {
+                    thickness: px(1.),
+                    color: None,
+                }),
+                ..run(5, black())
+            },
+        ];
+        let purple = hsla(0.8, 1., 0.5, 1.);
+        let colors = vec![
+            // From the "i" of a ligature, which keeps the color of its "f".
+            (1..3, green()),
+            // Across the wrap after "fish " and into the link.
+            (5..12, blue()),
+            // Over the one before, which it wins.
+            (8..9, green()),
+            // From the middle of the link's ligature across the newline.
+            (11..17, purple),
+        ];
+
+        let window = cx.open_window(size(px(400.), px(200.)), |_, _| ColoredTextView {
+            text: text.into(),
+            runs: runs.clone(),
+            colors: None,
+            layout: TextLayout::default(),
+        });
+        let (plain, plain_lines) = draw_with_colors(window, None, cx);
+        let shaped = text_system.shaped.load(atomic::Ordering::SeqCst);
+        let (colored, colored_lines) = draw_with_colors(window, Some(colors.clone()), cx);
+
+        // The glyphs are those shaped without colors, in the same places, wrapped the same.
+        assert_eq!(text_system.shaped.load(atomic::Ordering::SeqCst), shaped);
+        assert_eq!(colored_lines.len(), 2);
+        assert!(
+            colored_lines
+                .iter()
+                .zip(&plain_lines)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+        );
+        assert_eq!(colored_lines[0].wrap_boundaries.len(), 1);
+        assert_eq!(placed(&colored.glyphs), placed(&plain.glyphs));
+        // The underline, the strikethrough and the background keep their colors.
+        assert_eq!(colored.lines, plain.lines);
+        assert_eq!(colored.lines.len(), 2);
+        assert_eq!(colored.backgrounds, plain.backgrounds);
+        assert_eq!(colored.backgrounds.len(), 1);
+
+        // Each glyph takes the color of the last range that holds its first byte, or its run's.
+        assert_eq!(
+            painted(&colored.glyphs),
+            expected_glyph_colors(&plain_lines, &runs, &colors)
+        );
+        assert_eq!(
+            painted(&plain.glyphs),
+            expected_glyph_colors(&plain_lines, &runs, &[])
+        );
+        let ids = colored
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.0)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids.iter().filter(|id| **id == FI_LIGATURE.0).count(),
+            5,
+            "{ids:?}"
+        );
+        // "fish " ends the first row in blue and "fi" starts the second in it.
+        let rows_in_blue = colored
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.3 == blue())
+            .map(|glyph| glyph.1.to_bits())
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(rows_in_blue.len(), 2);
+
+        // Drawn without colors again, the text is as it was.
+        let (cleared, _) = draw_with_colors(window, None, cx);
+        assert_eq!(cleared, plain);
+        assert_eq!(text_system.shaped.load(atomic::Ordering::SeqCst), shaped);
+
+        // Colors in the text's runs would have split its font runs, and broken its ligatures.
+        window
+            .update(cx, |_, window, _| {
+                let mut recolored = runs.clone();
+                recolored[0].len = 1;
+                recolored.insert(1, run(9, green()));
+                let shape = |runs: &[TextRun]| {
+                    window
+                        .text_system()
+                        .shape_text(text.into(), px(16.), runs, Some(px(72.)), None)
+                        .unwrap()
+                };
+                let (plain, recolored) = (shape(&runs), shape(&recolored));
+                assert_ne!(
+                    plain[0].unwrapped_layout.width,
+                    recolored[0].unwrapped_layout.width
+                );
+            })
+            .unwrap();
+    }
+
+    /// Right-to-left glyphs come against byte order, and each still takes the color of the range
+    /// that holds its first byte.
+    #[test]
+    fn glyph_colors_follow_right_to_left_glyphs() {
+        let mut cx = TestAppContext::build_with_text_system(
+            crate::TestDispatcher::new(0),
+            None,
+            Arc::new(LigatureTextSystem::default()),
+        );
+        let cx = &mut cx;
+        // "a", a Hebrew word drawn from right to left, and "b".
+        let text = "a \u{05e9}\u{05dc}\u{05d5}\u{05dd} b";
+        let runs = vec![plain_run(text.len(), black())];
+        let colors = vec![(0..4, green()), (6..11, blue())];
+        let window = cx.open_window(size(px(400.), px(200.)), |_, _| ColoredTextView {
+            text: text.into(),
+            runs: runs.clone(),
+            colors: None,
+            layout: TextLayout::default(),
+        });
+        let (plain, lines) = draw_with_colors(window, None, cx);
+        let (colored, _) = draw_with_colors(window, Some(colors.clone()), cx);
+
+        let indices = lines[0]
+            .unwrapped_layout
+            .runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.index))
+            .collect::<Vec<_>>();
+        assert_eq!(indices, [0, 1, 8, 6, 4, 2, 10, 11]);
+        assert_eq!(placed(&colored.glyphs), placed(&plain.glyphs));
+        assert_eq!(
+            painted(&colored.glyphs),
+            expected_glyph_colors(&lines, &runs, &colors)
+        );
+        assert_eq!(
+            painted(&colored.glyphs),
+            [
+                green(),
+                green(),
+                blue(),
+                blue(),
+                black(),
+                green(),
+                blue(),
+                black()
+            ]
+        );
     }
 
     #[test]

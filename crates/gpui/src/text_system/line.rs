@@ -1,3 +1,4 @@
+// Modified by Mesa Hills Research, as docs/upstream.md in mesa-hills-research/gpui describes.
 use crate::{
     App, Bounds, DevicePixels, Half, Hsla, LineLayout, Pixels, Point, RenderGlyphParams, Result,
     SharedString, StrikethroughStyle, TextAlign, UnderlineStyle, Window, WrapBoundary,
@@ -5,7 +6,7 @@ use crate::{
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
-use std::{ops::Range, sync::Arc};
+use std::{borrow::Cow, collections::BinaryHeap, ops::Range, sync::Arc};
 
 /// Pre-computed glyph data for efficient painting without per-glyph cache lookups.
 ///
@@ -150,6 +151,7 @@ impl ShapedLine {
             align_width,
             &self.decoration_runs,
             &[],
+            GlyphColors::default(),
             window,
             cx,
             &mut paint_underline,
@@ -403,6 +405,7 @@ impl LineLayout {
             align_width,
             decoration_runs,
             &[],
+            GlyphColors::default(),
             window,
             cx,
             &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
@@ -466,6 +469,29 @@ impl WrappedLine {
         window: &mut Window,
         cx: &mut App,
     ) -> Result<()> {
+        self.paint_with_glyph_colors(
+            origin,
+            line_height,
+            align,
+            bounds,
+            GlyphColors::default(),
+            window,
+            cx,
+        )
+    }
+
+    /// Paints this line like [`Self::paint`], with the glyphs `glyph_colors` covers in its
+    /// colors.
+    pub(crate) fn paint_with_glyph_colors(
+        &self,
+        origin: Point<Pixels>,
+        line_height: Pixels,
+        align: TextAlign,
+        bounds: Option<Bounds<Pixels>>,
+        glyph_colors: GlyphColors<'_>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Result<()> {
         let align_width = match bounds {
             Some(bounds) => Some(bounds.size.width),
             None => self.layout.wrap_width,
@@ -479,6 +505,7 @@ impl WrappedLine {
             align_width,
             &self.decoration_runs,
             &self.wrap_boundaries,
+            glyph_colors,
             window,
             cx,
             &mut |_, origin, width, style, window| window.paint_underline(origin, width, style),
@@ -518,6 +545,109 @@ impl WrappedLine {
     }
 }
 
+/// Colors that take the place of the decoration runs' colors for the glyphs in their byte
+/// ranges, which are sorted by start and don't overlap. The ranges count from the start of the
+/// text, and the line being painted starts at `line_start` in it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct GlyphColors<'a> {
+    colors: &'a [(Range<usize>, Hsla)],
+    line_start: usize,
+    /// The first range that doesn't end at or before the last glyph looked up.
+    next: usize,
+    last_index: usize,
+}
+
+impl<'a> GlyphColors<'a> {
+    pub(crate) fn new(colors: &'a [(Range<usize>, Hsla)], line_start: usize) -> Self {
+        Self {
+            colors,
+            line_start,
+            next: 0,
+            last_index: line_start,
+        }
+    }
+
+    /// The color of the glyph at byte `index` of the line, when a range covers it. Glyphs in
+    /// byte order make this one forward sweep over the ranges. A glyph before the one looked up
+    /// last, as in right-to-left text, finds its range with a binary search.
+    fn color_at(&mut self, index: usize) -> Option<Hsla> {
+        let index = self.line_start + index;
+        if index < self.last_index {
+            // Right-to-left text lays its glyphs out against byte order.
+            self.next = self.colors.partition_point(|(range, _)| range.end <= index);
+        }
+        self.last_index = index;
+        while self
+            .colors
+            .get(self.next)
+            .is_some_and(|(range, _)| range.end <= index)
+        {
+            self.next += 1;
+        }
+        let (range, color) = self.colors.get(self.next)?;
+        (range.start <= index).then_some(*color)
+    }
+}
+
+/// `colors` sorted by start without overlaps or empty ranges, the later of two overlapping
+/// ranges taking their overlap. Colors that are so already come back borrowed. Others take one
+/// sweep over the ranges' ends, O(H log H) for H ranges.
+pub(crate) fn resolve_glyph_colors(
+    colors: &[(Range<usize>, Hsla)],
+) -> Cow<'_, [(Range<usize>, Hsla)]> {
+    if colors.iter().all(|(range, _)| range.start < range.end)
+        && colors
+            .windows(2)
+            .all(|pair| pair[0].0.end <= pair[1].0.start)
+    {
+        return Cow::Borrowed(colors);
+    }
+    // The ranges that color something, by start, and every place one starts or ends.
+    let mut by_start = Vec::with_capacity(colors.len());
+    by_start.extend((0..colors.len()).filter(|&ix| colors[ix].0.start < colors[ix].0.end));
+    by_start.sort_unstable_by_key(|&ix| colors[ix].0.start);
+    let mut ends = Vec::with_capacity(2 * by_start.len());
+    ends.extend(
+        by_start
+            .iter()
+            .flat_map(|&ix| [colors[ix].0.start, colors[ix].0.end]),
+    );
+    ends.sort_unstable();
+    ends.dedup();
+
+    // The ranges that have started, the latest given on top. One that has ended leaves once it
+    // comes to the top, since only the top colors the text.
+    let mut started = BinaryHeap::with_capacity(by_start.len());
+    let mut next = 0;
+    let mut resolved: Vec<(Range<usize>, Hsla)> = Vec::with_capacity(by_start.len());
+    let mut last_winner = None;
+    for piece in ends.windows(2) {
+        let (start, end) = (piece[0], piece[1]);
+        while let Some(&ix) = by_start.get(next)
+            && colors[ix].0.start <= start
+        {
+            started.push(ix);
+            next += 1;
+        }
+        while let Some(&ix) = started.peek()
+            && colors[ix].0.end <= start
+        {
+            started.pop();
+        }
+        let Some(&winner) = started.peek() else {
+            continue;
+        };
+        match resolved.last_mut() {
+            Some((range, _)) if last_winner == Some(winner) && range.end == start => {
+                range.end = end;
+            }
+            _ => resolved.push((start..end, colors[winner].1)),
+        }
+        last_winner = Some(winner);
+    }
+    Cow::Owned(resolved)
+}
+
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
@@ -526,6 +656,7 @@ fn paint_line(
     align_width: Option<Pixels>,
     decoration_runs: &[DecorationRun],
     wrap_boundaries: &[WrapBoundary],
+    mut glyph_colors: GlyphColors<'_>,
     window: &mut Window,
     cx: &mut App,
     paint_underline: &mut dyn FnMut(
@@ -744,7 +875,7 @@ fn paint_line(
                             run.font_id,
                             glyph.id,
                             layout.font_size,
-                            color,
+                            glyph_colors.color_at(glyph.index).unwrap_or(color),
                         )?;
                     }
                 }
@@ -1396,6 +1527,7 @@ mod tests {
                     Some(px(16.)),
                     &wrapped.decoration_runs,
                     &wrapped.wrap_boundaries,
+                    GlyphColors::default(),
                     window,
                     cx,
                     &mut |range, origin, width, style, window| {
@@ -1975,5 +2107,161 @@ mod tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn overlapping_glyph_colors_resolve_to_the_later_range() {
+        let (red, green, blue, yellow) =
+            (crate::red(), crate::green(), crate::blue(), crate::yellow());
+
+        let sorted = [(0..2, red), (2..4, green), (6..8, blue)];
+        assert!(matches!(resolve_glyph_colors(&sorted), Cow::Borrowed(_)));
+        assert!(matches!(resolve_glyph_colors(&[]), Cow::Borrowed(_)));
+
+        for (colors, resolved) in [
+            (
+                vec![(0..10, red), (3..5, blue)],
+                vec![(0..3, red), (3..5, blue), (5..10, red)],
+            ),
+            (vec![(3..5, blue), (0..10, red)], vec![(0..10, red)]),
+            (
+                vec![
+                    (4..8, red),
+                    (0..2, green),
+                    (7..9, blue),
+                    (1..5, yellow),
+                    (6..6, blue),
+                ],
+                vec![(0..1, green), (1..5, yellow), (5..7, red), (7..9, blue)],
+            ),
+        ] {
+            let actual = resolve_glyph_colors(&colors).into_owned();
+            assert_eq!(actual, resolved);
+            // Each byte has the color of the last range that holds it.
+            for ix in 0..12 {
+                let last = colors.iter().rev().find(|(range, _)| range.contains(&ix));
+                let found = actual.iter().find(|(range, _)| range.contains(&ix));
+                assert_eq!(found.map(|(_, color)| color), last.map(|(_, color)| color));
+            }
+        }
+    }
+
+    /// Random sets of ranges, some in order, some reversed, nested, empty or backward, resolve
+    /// to what painting each range in turn over the last would give.
+    #[test]
+    fn glyph_colors_resolve_like_ranges_painted_in_turn() {
+        // A xorshift generator, so every run checks the same cases.
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut below = |bound: usize| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state % bound as u64) as usize
+        };
+        for case in 0..2000 {
+            let count = below(16);
+            let color = |ix: usize| crate::hsla(ix as f32 / 16., 1., 0.5, 1.);
+            let mut colors = Vec::new();
+            match case % 4 {
+                // Anywhere, overlapping or not.
+                0 => {
+                    for ix in 0..count {
+                        let start = below(48);
+                        colors.push((start..start + below(12), color(ix)));
+                    }
+                }
+                // Apart, from the last to the first.
+                1 => {
+                    let mut end = 64_usize;
+                    for ix in 0..count {
+                        let gap = below(4);
+                        let len = 1 + below(4);
+                        let Some(start) = end.checked_sub(gap + len) else {
+                            break;
+                        };
+                        colors.push((start..start + len, color(ix)));
+                        end = start;
+                    }
+                }
+                // Each inside the one before, or each around it.
+                2 => {
+                    let (mut start, mut end) = (0, 64);
+                    for ix in 0..count {
+                        start += below(3);
+                        end -= below(3);
+                        colors.push((start..end.max(start), color(ix)));
+                    }
+                    if case % 8 == 2 {
+                        colors.reverse();
+                    }
+                }
+                // Anywhere, with some backward.
+                _ => {
+                    for ix in 0..count {
+                        let start = below(48);
+                        let end = start + below(12);
+                        let range = if below(3) == 0 {
+                            end..start
+                        } else {
+                            start..end
+                        };
+                        colors.push((range, color(ix)));
+                    }
+                }
+            }
+
+            let resolved = resolve_glyph_colors(&colors);
+            assert!(
+                resolved.iter().all(|(range, _)| range.start < range.end)
+                    && resolved
+                        .windows(2)
+                        .all(|pair| pair[0].0.end <= pair[1].0.start),
+                "{colors:?} resolved to {resolved:?}"
+            );
+            for ix in 0..64 {
+                let painted = colors.iter().rev().find(|(range, _)| range.contains(&ix));
+                let found = resolved.iter().find(|(range, _)| range.contains(&ix));
+                assert_eq!(
+                    found.map(|(_, color)| color),
+                    painted.map(|(_, color)| color),
+                    "byte {ix} of {colors:?} resolved to {resolved:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glyph_colors_follow_glyphs_in_and_against_byte_order() {
+        let (red, blue) = (crate::red(), crate::blue());
+        let colors = [(2..4, red), (6..7, blue)];
+        let expected = [
+            None,
+            Some(red),
+            Some(red),
+            None,
+            None,
+            Some(blue),
+            None,
+            None,
+        ];
+
+        // A line that starts at byte 1 of the text, with its glyphs in byte order.
+        let mut glyph_colors = GlyphColors::new(&colors, 1);
+        let forward = (0..8)
+            .map(|ix| glyph_colors.color_at(ix))
+            .collect::<Vec<_>>();
+        assert_eq!(forward, expected);
+
+        // Right-to-left glyphs, which come against byte order.
+        let mut glyph_colors = GlyphColors::new(&colors, 1);
+        let mut backward = (0..8)
+            .rev()
+            .map(|ix| glyph_colors.color_at(ix))
+            .collect::<Vec<_>>();
+        backward.reverse();
+        assert_eq!(backward, expected);
+
+        let mut none = GlyphColors::default();
+        assert!((0..8).all(|ix| none.color_at(ix).is_none()));
     }
 }

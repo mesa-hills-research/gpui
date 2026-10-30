@@ -386,6 +386,22 @@ adds the same line.
   It now gives a path, and the workspace asks for proptest 1.12. `mhr-gpui-macros` tests its
   examples with `mhr-gpui`'s `test-support`, whose helpers the expansion calls.
   `randomized_element_tree_matches_full_render` in `mhr-gpui` is a property test again, as in Zed.
+- **Glyph colors at paint time**, in `mhr-gpui`'s `src/elements/text.rs` and
+  `src/text_system/line.rs`. A text's glyphs took their colors from its runs alone, and a color
+  change between runs starts a new font run, which the shaper sees. macOS breaks ligatures at font
+  runs, so recoloring part of a text, such as the current match of a search, could change its
+  glyphs, widths and wrapping, and shaped it again each time the color moved.
+  `TextLayout::paint_foreground_with_colors` paints the laid-out text like `paint_foreground`,
+  with the glyphs in given byte ranges in their range's color. The later of two overlapping ranges
+  wins, and a glyph of several characters, such as a ligature, takes the color of its first one.
+  Underlines, strikethroughs and run backgrounds keep their runs' colors. The ranges are resolved
+  once per call. Ranges that come sorted and apart are used as they are, with nothing allocated,
+  and others take one sweep over their ends, in O(H log H) for H ranges. `paint_line` then looks
+  each glyph's color up in a forward sweep over the ranges while the glyphs come in byte order,
+  and with a binary search for a glyph that comes before the last one, as in right-to-left text.
+  The tests at the end of `text.rs` draw with a text system that joins "fi" into one glyph within
+  a font run and lays Hebrew out from right to left, and those at the end of `line.rs` check the
+  resolved ranges against painting each range in turn, on random sets of ranges.
 
 ## The mobile crate
 
