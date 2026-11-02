@@ -18,13 +18,13 @@ RUST_FONTCONFIG_DLOPEN = "on"
 # Uncomment and adjust if building without cargo-ndk.
 
 # [target.aarch64-linux-android]
-# linker = "/Users/pandranki/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang"
+# linker = "/Users/ada/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang"
 
 # [target.armv7-linux-androideabi]
-# linker = "/Users/pandranki/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi26-clang"
+# linker = "/Users/ada/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/armv7a-linux-androideabi26-clang"
 
 # [target.x86_64-linux-android]
-# linker = "/Users/pandranki/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android26-clang"
+# linker = "/Users/ada/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/x86_64-linux-android26-clang"
 
 # [target.i686-linux-android]
-# linker = "/Users/pandranki/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/i686-linux-android26-clang"
+# linker = "/Users/ada/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/i686-linux-android26-clang"
