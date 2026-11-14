@@ -466,6 +466,33 @@ fn a_row_above_the_screen_that_grows_moves_no_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_row_on_the_screen_counts_at_the_height_it_draws_at(cx: &mut TestAppContext) {
+    for scale in SCALES {
+        // The last row draws 24 taller, with no remeasure asked for. The end it grew comes up
+        // to the bottom edge in the same frame.
+        let mut rows = Rows::new(cx, turns(40), scale);
+        let before = rows.tops();
+        let last = rows.heights.borrow().len() - 1;
+        let above = rows.top(last - 1);
+        rows.heights.borrow_mut()[last] += 24.;
+        rows.draw();
+        assert_eq!(rows.blank(), 0., "at {scale}");
+        assert_eq!(
+            rows.top(last - 1),
+            above - (24. * scale) as f64,
+            "at {scale}"
+        );
+        // It draws 24 shorter again, and the end asked for comes to the bottom edge with it.
+        rows.heights.borrow_mut()[last] -= 24.;
+        rows.state.queue_move(ListMove::ToEnd);
+        rows.draw();
+        assert_eq!(rows.blank(), 0., "at {scale}");
+        assert_eq!(rows.tops(), before, "at {scale}");
+        rows.assert_whole();
+    }
+}
+
+#[gpui::test]
 fn deltas_in_one_frame_or_in_many_end_on_the_same_lines(cx: &mut TestAppContext) {
     for scale in SCALES {
         let mut once = Rows::new(cx, turns(80), scale);

@@ -435,6 +435,14 @@ impl StateInner {
         let view = device(height);
         let room = (view - top_pad - bottom_pad).max(0.);
 
+        // The rows on the screen count at the heights the frame draws them at, though no
+        // remeasure was asked for.
+        for &(ix, _) in &moves.drawn {
+            if ix < count {
+                rows.render(ix, render, window, cx);
+            }
+        }
+
         // Where the view is, with a remeasured top row kept by its place in it.
         let anchor = self.logical_scroll_top();
         let mut place = Place {
