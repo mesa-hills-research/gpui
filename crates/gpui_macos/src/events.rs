@@ -275,6 +275,9 @@ pub(crate) unsafe fn platform_input_from_native(
                     ScrollDelta::Lines(raw_data)
                 };
 
+                // The system's inertia after the fingers lifted.
+                let coasting = native_event.momentumPhase() != NSEventPhase::NSEventPhaseNone;
+
                 PlatformInput::ScrollWheel(ScrollWheelEvent {
                     position: point(
                         px(native_event.locationInWindow().x as f32),
@@ -283,6 +286,7 @@ pub(crate) unsafe fn platform_input_from_native(
                     delta,
                     touch_phase: phase,
                     modifiers: read_modifiers(native_event),
+                    coasting,
                 })
             }),
             NSEventType::NSLeftMouseDragged

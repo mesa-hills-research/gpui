@@ -987,13 +987,13 @@ impl TouchGestureRecognizer {
         let position = momentum.position;
         if elapsed >= momentum.duration {
             self.momentum = None;
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
+            Some(RecognizedTouchGesture::Scroll(coast_event(
                 position,
                 delta,
                 TouchPhase::Ended,
             )))
         } else {
-            Some(RecognizedTouchGesture::Scroll(scroll_event(
+            Some(RecognizedTouchGesture::Scroll(coast_event(
                 position,
                 delta,
                 TouchPhase::Moved,
@@ -1012,6 +1012,19 @@ fn scroll_event(
         delta: ScrollDelta::Pixels(delta),
         modifiers: Modifiers::default(),
         touch_phase,
+        coasting: false,
+    }
+}
+
+/// A step of the fling after a finger's swipe, which coasts.
+fn coast_event(
+    position: Point<Pixels>,
+    delta: Point<Pixels>,
+    touch_phase: TouchPhase,
+) -> ScrollWheelEvent {
+    ScrollWheelEvent {
+        coasting: true,
+        ..scroll_event(position, delta, touch_phase)
     }
 }
 

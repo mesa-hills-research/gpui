@@ -142,6 +142,8 @@ struct DirectManipulationEventHandler {
     last_x_offset: Cell<f32>,
     last_y_offset: Cell<f32>,
     scroll_phase: Cell<TouchPhase>,
+    /// The viewport runs on its inertia, after the fingers lifted.
+    coasting: Cell<bool>,
     pending_events: Rc<RefCell<Vec<PlatformInput>>>,
 }
 
@@ -159,6 +161,7 @@ impl DirectManipulationEventHandler {
             last_x_offset: Cell::new(0.0),
             last_y_offset: Cell::new(0.0),
             scroll_phase: Cell::new(TouchPhase::Started),
+            coasting: Cell::new(false),
             pending_events,
         }
     }
@@ -175,6 +178,7 @@ impl DirectManipulationEventHandler {
                         delta: ScrollDelta::Pixels(point(px(0.0), px(0.0))),
                         modifiers,
                         touch_phase: TouchPhase::Ended,
+                        coasting: self.coasting.get(),
                     }));
             }
             GestureKind::Pinch => {
@@ -213,6 +217,7 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
         if current == previous {
             return Ok(());
         }
+        self.coasting.set(current == DIRECTMANIPULATION_INERTIA);
 
         // A new gesture interrupted inertia, so end the old sequence.
         if current == DIRECTMANIPULATION_RUNNING && previous == DIRECTMANIPULATION_INERTIA {
@@ -329,6 +334,7 @@ impl IDirectManipulationViewportEventHandler_Impl for DirectManipulationEventHan
                         delta: ScrollDelta::Pixels(point(px(dx), px(dy))),
                         modifiers,
                         touch_phase,
+                        coasting: self.coasting.get(),
                     }));
             }
             GestureKind::Pinch => {
