@@ -146,6 +146,7 @@ impl ShapedLine {
         paint_line(
             origin,
             &self.layout,
+            Some(&self.text),
             line_height,
             align,
             align_width,
@@ -400,6 +401,7 @@ impl LineLayout {
         paint_line(
             origin,
             self,
+            None,
             line_height,
             align,
             align_width,
@@ -500,6 +502,7 @@ impl WrappedLine {
         paint_line(
             origin,
             &self.layout.unwrapped_layout,
+            Some(&self.text),
             line_height,
             align,
             align_width,
@@ -651,6 +654,7 @@ pub(crate) fn resolve_glyph_colors(
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
+    text: Option<&str>,
     line_height: Pixels,
     align: TextAlign,
     align_width: Option<Pixels>,
@@ -700,6 +704,25 @@ fn paint_line(
         let mut prev_glyph_position = Point::default();
         let mut max_glyph_size = size(px(0.), px(0.));
         let mut first_glyph_x = origin.x;
+        // The row of text painting, by the index of its first glyph and where it starts.
+        #[cfg(any(test, feature = "test-support"))]
+        let mut row: Option<(usize, Point<Pixels>)> = None;
+        #[cfg(any(test, feature = "test-support"))]
+        let record = |window: &mut Window, row: (usize, Point<Pixels>), end: usize| {
+            let (start, at) = row;
+            if let Some(words) = text.and_then(|text| text.get(start..end)) {
+                let width = align_width.unwrap_or(layout.width).max(px(1.));
+                let bounds = Bounds::new(at, size(width, line_height));
+                window.record_painted_text(
+                    words.trim_end(),
+                    at.x,
+                    at.y + baseline_offset.y,
+                    bounds,
+                );
+            }
+        };
+        #[cfg(not(any(test, feature = "test-support")))]
+        let _ = text;
         for (run_ix, run) in layout.runs.iter().enumerate() {
             max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
@@ -711,6 +734,10 @@ fn paint_line(
 
                 if wraps.peek() == Some(&&WrapBoundary { run_ix, glyph_ix }) {
                     wraps.next();
+                    #[cfg(any(test, feature = "test-support"))]
+                    if let Some(row) = row.take() {
+                        record(window, row, glyph.index);
+                    }
                     if let Some((underline_origin, underline_style, underline_range)) =
                         current_underline.as_mut()
                     {
@@ -761,6 +788,10 @@ fn paint_line(
                     glyph_origin.y += line_height;
                 }
                 prev_glyph_position = glyph.position;
+                #[cfg(any(test, feature = "test-support"))]
+                if row.is_none() {
+                    row = Some((glyph.index, glyph_origin));
+                }
 
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle, Range<usize>)> =
                     None;
@@ -880,6 +911,11 @@ fn paint_line(
                     }
                 }
             }
+        }
+
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(row) = row.take() {
+            record(window, row, layout.len);
         }
 
         let mut last_line_end_x = first_glyph_x + layout.width;
@@ -1522,6 +1558,7 @@ mod tests {
                 paint_line(
                     origin,
                     &wrapped.unwrapped_layout,
+                    Some(&wrapped.text),
                     line_height,
                     TextAlign::Left,
                     Some(px(16.)),

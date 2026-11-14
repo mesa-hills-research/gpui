@@ -1007,6 +1007,8 @@ pub(crate) struct Frame {
     pub(crate) debug_bounds: FxHashMap<String, Bounds<Pixels>>,
     #[cfg(any(test, feature = "test-support"))]
     debug_bounds_records: Vec<(String, Bounds<Pixels>)>,
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) painted_text: Vec<PaintedText>,
     #[cfg(any(feature = "inspector", debug_assertions))]
     pub(crate) next_inspector_instance_ids: FxHashMap<Rc<crate::InspectorElementPath>, usize>,
     #[cfg(any(feature = "inspector", debug_assertions))]
@@ -1030,6 +1032,8 @@ pub(crate) struct PaintIndex {
     scene_index: usize,
     #[cfg(any(test, feature = "test-support"))]
     debug_bounds_index: usize,
+    #[cfg(any(test, feature = "test-support"))]
+    painted_text_index: usize,
     mouse_listeners_index: usize,
     input_handlers_index: usize,
     cursor_styles_index: usize,
@@ -1038,6 +1042,20 @@ pub(crate) struct PaintIndex {
     paint_effects_index: usize,
     tab_handle_index: usize,
     line_layout_index: LineLayoutIndex,
+}
+
+/// A row of text a frame painted ([`Window::painted_text`]).
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Clone, Debug)]
+pub struct PaintedText {
+    /// What the row says.
+    pub text: SharedString,
+    /// The device pixel column its first glyph starts at.
+    pub x: ScaledPixels,
+    /// The device pixel row its glyphs' baseline is on, where they paint.
+    pub baseline: ScaledPixels,
+    /// The row's box as laid out, in logical pixels, before its content mask.
+    pub bounds: Bounds<Pixels>,
 }
 
 /// Where an index recorded at `index`, inside a range of the rendered frame
@@ -1099,6 +1117,12 @@ impl PaintIndex {
                 self.debug_bounds_index,
                 from.debug_bounds_index,
                 to.debug_bounds_index,
+            ),
+            #[cfg(any(test, feature = "test-support"))]
+            painted_text_index: rebase_index(
+                self.painted_text_index,
+                from.painted_text_index,
+                to.painted_text_index,
             ),
             mouse_listeners_index: rebase_index(
                 self.mouse_listeners_index,
@@ -1226,6 +1250,8 @@ impl Frame {
             debug_bounds: FxHashMap::default(),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_records: Vec::new(),
+            #[cfg(any(test, feature = "test-support"))]
+            painted_text: Vec::new(),
 
             #[cfg(any(feature = "inspector", debug_assertions))]
             next_inspector_instance_ids: FxHashMap::default(),
@@ -1256,6 +1282,7 @@ impl Frame {
         {
             self.debug_bounds.clear();
             self.debug_bounds_records.clear();
+            self.painted_text.clear();
         }
 
         #[cfg(any(feature = "inspector", debug_assertions))]
@@ -3012,6 +3039,43 @@ impl Window {
         self.rendered_frame.scene.underlines.clone()
     }
 
+    /// Returns each row of text the most recently rendered frame painted, in the order it
+    /// painted them, with the device pixel row its glyphs stand on, so tests can follow lines
+    /// of text from frame to frame. A wrapped line gives a row for each line it wraps to, a
+    /// view reused from the frame before gives the rows it painted then, and rows their content
+    /// mask hides are left out.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn painted_text(&self) -> Vec<PaintedText> {
+        self.rendered_frame.painted_text.clone()
+    }
+
+    /// Records a row of text painted in this frame, `baseline` down the window in logical
+    /// pixels, inside `bounds` as laid out.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) fn record_painted_text(
+        &mut self,
+        text: &str,
+        origin_x: Pixels,
+        baseline: Pixels,
+        bounds: Bounds<Pixels>,
+    ) {
+        let mask = self.content_mask().bounds;
+        let shown = bounds.intersect(&mask);
+        if shown.size.width <= px(0.) || shown.size.height <= px(0.) {
+            return;
+        }
+        let scale_factor = self.scale_factor();
+        // As `paint_glyph` places a glyph's raster.
+        let row = round_half_toward_zero(baseline.0 * scale_factor * SUBPIXEL_VARIANTS_Y as f32)
+            / SUBPIXEL_VARIANTS_Y as f32;
+        self.next_frame.painted_text.push(PaintedText {
+            text: SharedString::from(text.to_string()),
+            x: ScaledPixels(round_half_toward_zero(origin_x.0 * scale_factor)),
+            baseline: ScaledPixels(row.trunc()),
+            bounds,
+        });
+    }
+
     /// Set the content size of the window.
     pub fn resize(&mut self, size: Size<Pixels>) {
         self.platform_window.resize(size);
@@ -4299,6 +4363,8 @@ impl Window {
             scene_index: self.next_frame.scene.len(),
             #[cfg(any(test, feature = "test-support"))]
             debug_bounds_index: self.next_frame.debug_bounds_records.len(),
+            #[cfg(any(test, feature = "test-support"))]
+            painted_text_index: self.next_frame.painted_text.len(),
             mouse_listeners_index: self.next_frame.mouse_listeners.len(),
             input_handlers_index: self.next_frame.input_handlers.len(),
             cursor_styles_index: self.next_frame.cursor_styles.len(),
@@ -4320,6 +4386,13 @@ impl Window {
         {
             self.next_frame
                 .record_debug_bounds(selector.clone(), *bounds);
+        }
+        #[cfg(any(test, feature = "test-support"))]
+        {
+            let painted = self.rendered_frame.painted_text
+                [range.start.painted_text_index..range.end.painted_text_index]
+                .to_vec();
+            self.next_frame.painted_text.extend(painted);
         }
         self.next_frame.cursor_styles.extend(
             self.rendered_frame.cursor_styles
