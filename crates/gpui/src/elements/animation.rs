@@ -1939,13 +1939,10 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
             let mut nodes = Vec::new();
             let (root, height) = cx.update(|cx| SpinnerNode::tree(3, &mut nodes, cx));
-            let window = cx.open_window(size(px(100.), px(1000.)), {
-                let root = root.clone();
-                move |_, _| SpinnerTree {
-                    root,
-                    height,
-                    leading: 0,
-                }
+            let window = cx.open_window(size(px(100.), px(1000.)), move |_, _| SpinnerTree {
+                root,
+                height,
+                leading: 0,
             });
             cx.run_until_parked();
 
