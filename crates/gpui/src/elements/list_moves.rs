@@ -256,6 +256,15 @@ impl ListState {
         self.0.borrow().moves.is_some()
     }
 
+    /// Whether moves wait for the next layout.
+    pub fn moves_waiting(&self) -> bool {
+        self.0
+            .borrow()
+            .moves
+            .as_ref()
+            .is_some_and(|moves| !moves.queue.is_empty())
+    }
+
     /// Queues `what` for the next layout, after the moves queued before it. A list not laid out
     /// by queued moves does what the move asks at once, as its other methods do.
     pub fn queue_move(&self, what: ListMove) {

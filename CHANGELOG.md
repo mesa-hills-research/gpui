@@ -28,7 +28,7 @@ the other crates stay at 0.1.0.
   turn it on lay out as before.
 - `ListState::measure_items` measures rows wherever they are in the next layout, and
   `ListState::item_height` gives a row's measured height, for an app that counts what came below
-  the screen.
+  the screen. `ListState::moves_waiting` says whether moves wait for the next layout.
 
 ### Input
 

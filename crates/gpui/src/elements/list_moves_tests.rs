@@ -558,6 +558,17 @@ fn the_thumb_dragged_up_reads_and_at_the_bottom_follows(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn moves_wait_for_the_next_layout(cx: &mut TestAppContext) {
+    let mut rows = Rows::new(cx, turns(40), 1.);
+    assert!(!rows.state.moves_waiting());
+    rows.state.queue_move(ListMove::ToStart);
+    assert!(rows.state.moves_waiting());
+    rows.draw();
+    assert!(!rows.state.moves_waiting());
+    assert_eq!(rows.state.logical_scroll_top().item_ix, 0);
+}
+
+#[gpui::test]
 fn a_wheel_event_reaches_the_list_as_a_move(cx: &mut TestAppContext) {
     let mut rows = Rows::new(cx, turns(40), 2.);
     let before = rows.tops();
