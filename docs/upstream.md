@@ -112,8 +112,9 @@ and `mhr-gpui-wgpu`. Version 0.1.7 covers the same ten, since `mhr-gpui`, `mhr-g
 and `mhr-gpui-macros` changed and the rest pin `mhr-gpui`. So does 0.1.8, for the same reasons.
 Version 0.1.9 covers nine, since only `mhr-gpui` changed and the other eight pin it.
 `mhr-gpui-macros` pins nothing that changed, so it stays at 0.1.8 and the others pin it there.
-Version 0.1.10 covers the same nine, since `mhr-gpui` and the platform crates changed and the
-rest pin `mhr-gpui`.
+Version 0.2.0 covers the same nine, since `mhr-gpui` and the platform crates changed and the
+rest pin `mhr-gpui`. It is 0.2 because a new public field of `ScrollWheelEvent` breaks code that
+writes one out field by field.
 The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
 `git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
 the release by name, since cargo refuses a version that's already on crates.io. The command below

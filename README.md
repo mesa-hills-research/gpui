@@ -26,8 +26,8 @@ imports `gpui` and `gpui_platform` as usual:
 
 ```toml
 [dependencies]
-gpui = { package = "mhr-gpui", version = "0.1" }
-gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["font-kit", "wayland", "x11"] }
+gpui = { package = "mhr-gpui", version = "0.2" }
+gpui_platform = { package = "mhr-gpui-platform", version = "0.2", features = ["font-kit", "wayland", "x11"] }
 ```
 
 ```rust

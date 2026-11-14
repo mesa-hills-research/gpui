@@ -22,7 +22,7 @@ Add the crate as a dev-dependency, with its library name:
 
 ```toml
 [dev-dependencies]
-gpui_screenshot = { package = "mhr-gpui-screenshot", version = "0.1" }
+gpui_screenshot = { package = "mhr-gpui-screenshot", version = "0.2" }
 ```
 
 `ScreenshotApp` is a headless app with the bundled fonts and a software renderer. Open a window

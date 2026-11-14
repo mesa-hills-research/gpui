@@ -5,8 +5,8 @@ named after the library imports as usual:
 
 ```toml
 [dependencies]
-gpui = { package = "mhr-gpui", version = "0.1" }
-gpui_platform = { package = "mhr-gpui-platform", version = "0.1", features = ["font-kit", "wayland", "x11"] }
+gpui = { package = "mhr-gpui", version = "0.2" }
+gpui_platform = { package = "mhr-gpui-platform", version = "0.2", features = ["font-kit", "wayland", "x11"] }
 # For HTTP, through `App::set_http_client`
 reqwest_client = { package = "mhr-reqwest-client", version = "0.1" }
 ```
@@ -19,7 +19,7 @@ Windows and the web need no features.
 
 Swap each `gpui-pre` crate for its `mhr-` package and keep the dependency's name, for example
 `gpui = { package = "gpui-pre", version = "=0.3.8" }` becomes
-`gpui = { package = "mhr-gpui", version = "0.1" }`. Code needs no changes.
+`gpui = { package = "mhr-gpui", version = "0.2" }`. Code needs no changes.
 
 An app can't use both sets, since each has its own `gpui` types. Every `gpui-pre` crate leaves the
 app's `Cargo.lock`, including those that other dependencies bring in, such as GPUI Kit from

@@ -5,13 +5,17 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
-## 0.1.10
+## 0.2.0
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,
 `mhr-gpui-macos`, `mhr-gpui-apple`, `mhr-gpui-web`, `mhr-gpui-platform` and
 `mhr-gpui-screenshot`, the same nine as 0.1.9. They pin each other exactly, so an app that uses
-several of them gets them all at 0.1.10. `mhr-gpui-macros` has no change and stays at 0.1.8, and
+several of them gets them all at 0.2.0. `mhr-gpui-macros` has no change and stays at 0.1.8, and
 the other crates stay at 0.1.0.
+
+The version moves to 0.2 because `ScrollWheelEvent` has a new public field, which breaks code that
+writes one out field by field. An app moves its requirements on the nine crates to
+`version = "0.2"`.
 
 ### Lists
 
