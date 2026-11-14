@@ -5,6 +5,43 @@ version, and a requirement such as `version = "0.1"` picks up the newest 0.1.x o
 [docs/upstream.md](docs/upstream.md#changes-to-the-gpui-crates) describes each change in more
 detail.
 
+## 0.1.10
+
+Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,
+`mhr-gpui-macos`, `mhr-gpui-apple`, `mhr-gpui-web`, `mhr-gpui-platform` and
+`mhr-gpui-screenshot`, the same nine as 0.1.9. They pin each other exactly, so an app that uses
+several of them gets them all at 0.1.10. `mhr-gpui-macros` has no change and stays at 0.1.8, and
+the other crates stay at 0.1.0.
+
+### Lists
+
+- `ListState::with_queued_moves` lays a list out by the moves queued for its next frame
+  (`ListState::queue_move`): the reader's scrolls, the scrollbar's thumb, the end, the start, a
+  place, a row revealed, a row kept on its place and the blank below the end closed. The layout
+  applies them in order over the rows it measures there, in whole device pixels, and reports what
+  each did (`ListState::report`), from which the app decides what each frame does with the end
+  (`List::follow_end`). The lines never move down by themselves. A shorter end leaves blank space
+  below it until what comes fills it, a scroll down stops where the end meets the bottom edge, a
+  coast after a move that placed the view moves nothing, and a view that gets shorter while
+  following takes the blank first and gives back what it moved when it gets taller. A chat
+  transcript that owns the reader's choice to follow is the list this is for. Lists that don't
+  turn it on lay out as before.
+- `ListState::measure_items` measures rows wherever they are in the next layout, and
+  `ListState::item_height` gives a row's measured height, for an app that counts what came below
+  the screen.
+
+### Input
+
+- `ScrollWheelEvent::coasting` says whether an event is the motion after the fingers lifted:
+  macOS's momentum phase, DirectManipulation's inertia on Windows and GPUI's own fling. A
+  `ScrollWheelEvent` written out field by field needs the new field, which
+  `..Default::default()` gives.
+
+### Tests
+
+- `Window::painted_text` gives each row of text the last frame painted, with the device pixel row
+  and column its glyphs stand on and the content mask it was painted in.
+
 ## 0.1.9
 
 Published as `mhr-gpui`, `mhr-gpui-wgpu`, `mhr-gpui-linux`, `mhr-gpui-windows`,

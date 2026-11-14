@@ -112,6 +112,8 @@ and `mhr-gpui-wgpu`. Version 0.1.7 covers the same ten, since `mhr-gpui`, `mhr-g
 and `mhr-gpui-macros` changed and the rest pin `mhr-gpui`. So does 0.1.8, for the same reasons.
 Version 0.1.9 covers nine, since only `mhr-gpui` changed and the other eight pin it.
 `mhr-gpui-macros` pins nothing that changed, so it stays at 0.1.8 and the others pin it there.
+Version 0.1.10 covers the same nine, since `mhr-gpui` and the platform crates changed and the
+rest pin `mhr-gpui`.
 The rest stay at 0.1.0, and the new versions pin them at `=0.1.0`.
 `git diff --stat <last release> HEAD -- crates tooling` shows what changed. Publish the crates of
 the release by name, since cargo refuses a version that's already on crates.io. The command below
@@ -406,6 +408,35 @@ adds the same line.
   The tests at the end of `text.rs` draw with a text system that joins "fi" into one glyph within
   a font run and lays Hebrew out from right to left, and those at the end of `line.rs` check the
   resolved ranges against painting each range in turn, on random sets of ranges.
+
+- **Lists laid out by queued moves**, in `mhr-gpui`'s `src/elements/list.rs` and
+  `src/elements/list_moves.rs`, for a list whose app owns the reader's choice to follow its end,
+  such as a chat transcript. `ListState::with_queued_moves` turns it on, and `queue_move` queues
+  each move for the next layout: a scroll, the thumb, the end, the start, a place, a row revealed,
+  a row kept on its place, and the blank below the end closed. The layout applies them in order
+  over the rows it measures there, so heights only estimated place the scrollbar's thumb and
+  nothing on the screen. The first drawn row's origin stays on a whole device pixel, since moves
+  are whole device pixels and a gesture's part below one waits for its next delta, until the
+  gesture turns, ends or pauses for a tenth of a second. Each move's effect (how far the lines
+  moved, whether the end shows) goes to the app's `List::follow_end` closure, which decides what
+  the frame does with the end, and `ListState::report` keeps the last frame's. The scroll range
+  ends at the end or at the bottom edge, whichever is lower, so blank below a shorter end stays and
+  the thumb holds still. A view that gets shorter while following takes the blank first and moves
+  the lines up by the rest, which the same view getting taller gives back. A coast
+  (`ScrollWheelEvent::coasting`) after a move that placed the view moves nothing. A replaced top
+  row keeps the place inside it, at another width by its share of the row, and a row kept on its
+  place keeps its drawn top through the splices that made it again. The list's own wheel handler,
+  `scroll_by`, `scroll_to`, `scroll_to_end`, `scroll_to_reveal_item` and the scrollbar all queue
+  moves in this mode. Lists that don't turn it on lay out as before, Tail following included. The
+  tests in `src/elements/list_moves_tests.rs` run each case at pixel ratios 1, 1.25, 1.5 and 2.
+- **A scroll event says whether it coasts**, in `mhr-gpui`'s `src/interactive.rs` and
+  `src/gestures.rs`, `mhr-gpui-macos`' `src/events.rs` and `mhr-gpui-windows`'
+  `src/direct_manipulation.rs`. `ScrollWheelEvent::coasting` is set for macOS's momentum phase,
+  DirectManipulation's inertia and GPUI's own fling of a finger's swipe.
+- **Rows of painted text for tests**, in `mhr-gpui`'s `src/window.rs` and
+  `src/text_system/line.rs`, behind `test-support`. `Window::painted_text` gives each row of text
+  the last frame painted, with the device pixel row and column its glyphs stand on and the content
+  mask it was painted in, which a test reads to follow lines of text from frame to frame.
 
 ## The mobile crate
 
