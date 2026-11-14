@@ -1,4 +1,4 @@
-//! A list laid out by queued moves, as a chat transcript lays out the end it follows: the lines
+//! A list laid out by queued moves, as a chat transcript lays out the end it follows. The lines
 //! never move down by themselves, blank space below the end stays until what comes fills it, a
 //! scroll down stops where the end meets the bottom edge, and every move is a whole number of
 //! device pixels. Each case runs at pixel ratios 1, 1.25, 1.5 and 2, with deltas in device
@@ -285,7 +285,7 @@ fn scrolls_below_a_device_pixel_wait_for_the_rest_of_their_gesture(cx: &mut Test
     for scale in SCALES {
         let mut rows = Rows::new(cx, turns(40), scale);
         let before = rows.tops();
-        // Three scrolls up of 0.4 in one gesture: the third moves the lines down 1.
+        // Three scrolls up of 0.4 in one gesture, of which the third moves the lines down 1.
         for (step, ms) in [(1, 0), (2, 16), (3, 32)] {
             rows.scroll(-0.4, moving(ms));
             rows.draw();

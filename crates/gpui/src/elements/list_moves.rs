@@ -2,7 +2,8 @@
 //! A list laid out by the moves queued for its next frame ([`ListState::with_queued_moves`]).
 //!
 //! The list applies the frame's moves in its layout, over the rows it measures there, in whole
-//! device pixels, and reports what each did: how far the lines moved and whether the end shows.
+//! device pixels, and reports what each did (how far the lines moved, and whether the end
+//! shows).
 //! The app decides from that report whether the frame follows the end, so the app owns the
 //! reader's choice to follow and the list owns where the lines are. A chat transcript is the
 //! list this is for.
@@ -104,7 +105,7 @@ pub struct ScrollGesture {
     pub starts: bool,
     /// The gesture ends with it (fingers lifted, or a coast stopped).
     pub ends: bool,
-    /// It is a coast: the motion after the fingers lifted, which the reader no longer drives.
+    /// It is a coast, the motion after the fingers lifted, which the reader no longer drives.
     pub coasting: bool,
     /// When it came, by the app's clock. A gesture whose platform says nothing of its end ends
     /// when no event has come for a tenth of a second.
@@ -185,8 +186,8 @@ pub struct ListReport {
     pub moves: Vec<MoveEffect>,
     /// What the app decided.
     pub follow: Follow,
-    /// Whether the end shows: no device pixel row of it, with the padding below it, is below the
-    /// view's bottom edge.
+    /// Whether the end shows, with no device pixel row of it or of the padding below it below
+    /// the view's bottom edge.
     pub end_shows: bool,
     /// How far the end, with the padding below it, is below the view's bottom edge, in logical
     /// pixels, by the rows measured where they were and estimated elsewhere. It is below zero
@@ -392,7 +393,7 @@ impl Rows<'_> {
     }
 }
 
-/// A place in the list in device pixels: a row and how far into it the view's top edge is,
+/// A place in the list in device pixels, as a row and how far into it the view's top edge is,
 /// past the padding above the rows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Place {
@@ -429,7 +430,7 @@ impl StateInner {
             space: size(AvailableSpace::Definite(width), AvailableSpace::MinContent),
             scale,
         };
-        // The rows' room: the view less the padding above and below them.
+        // The rows' room, the view less the padding above and below them.
         let (top_pad, bottom_pad) = (device(padding.top), device(padding.bottom));
         let view = device(height);
         let room = (view - top_pad - bottom_pad).max(0.);
