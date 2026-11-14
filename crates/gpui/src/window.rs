@@ -1056,6 +1056,9 @@ pub struct PaintedText {
     pub baseline: ScaledPixels,
     /// The row's box as laid out, in logical pixels, before its content mask.
     pub bounds: Bounds<Pixels>,
+    /// The content mask it was painted in, which tells the rows of a scrolled element from
+    /// text painted over it.
+    pub mask: Bounds<Pixels>,
 }
 
 /// Where an index recorded at `index`, inside a range of the rendered frame
@@ -3073,6 +3076,7 @@ impl Window {
             x: ScaledPixels(round_half_toward_zero(origin_x.0 * scale_factor)),
             baseline: ScaledPixels(row.trunc()),
             bounds,
+            mask,
         });
     }
 
