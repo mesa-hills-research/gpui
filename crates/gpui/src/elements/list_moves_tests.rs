@@ -12,9 +12,9 @@ use std::{
 
 use crate::{
     self as gpui, AnyWindowHandle, App, AppContext as _, Context, Follow, IntoElement as _,
-    ListFrame, ListMove, ListState, Render, ScrollDelta, ScrollGesture, ScrollWheelEvent, Styled,
-    TestAppContext, TouchPhase, VisualContext as _, VisualTestContext, Window, div, list, point,
-    px, size,
+    ListFrame, ListMove, ListOffset, ListState, Render, ScrollDelta, ScrollGesture,
+    ScrollWheelEvent, Styled, TestAppContext, TouchPhase, VisualContext as _, VisualTestContext,
+    Window, div, list, point, px, size,
 };
 
 use super::ListAlignment;
@@ -53,10 +53,23 @@ fn follower(choice: Rc<Cell<bool>>) -> impl FnMut(&ListFrame<'_>, &mut Window, &
                 _ => {}
             }
         }
-        let shows = if frame.moves.is_empty() {
-            frame.end_showed
-        } else {
+        // Where the frame's moves left the lines, or moved them up, the end that showed still
+        // shows, though output grew it in this frame. Where they moved the lines down or put
+        // them somewhere, it shows only where it shows now.
+        let placed = frame.moves.iter().any(|effect| {
+            effect.moved > 0
+                || matches!(
+                    effect.what,
+                    ListMove::KeepTop { .. }
+                        | ListMove::To(_)
+                        | ListMove::ToStart
+                        | ListMove::Reveal(_)
+                )
+        });
+        let shows = if placed {
             frame.end_shows
+        } else {
+            frame.end_showed || frame.end_shows
         };
         match (choice.get(), was) {
             (true, _) if frame.width_changed => Follow::ToEnd,
@@ -186,13 +199,18 @@ impl Rows {
     }
 }
 
-/// A gesture's event, `ms` into it.
+thread_local! {
+    /// The instant a test's clock starts at, which its events step from.
+    static START: scheduler::Instant = scheduler::Instant::now();
+}
+
+/// A gesture's event, `ms` after the test's clock started.
 fn moving(ms: u64) -> ScrollGesture {
     ScrollGesture {
         starts: false,
         ends: false,
         coasting: false,
-        at: Some(scheduler::Instant::now() + Duration::from_millis(ms)),
+        at: Some(START.with(|start| *start + Duration::from_millis(ms))),
     }
 }
 
@@ -490,6 +508,106 @@ fn a_row_on_the_screen_counts_at_the_height_it_draws_at(cx: &mut TestAppContext)
         assert_eq!(rows.tops(), before, "at {scale}");
         rows.assert_whole();
     }
+}
+
+#[gpui::test]
+fn a_followers_scroll_down_in_the_frame_the_end_grows_keeps_the_end_on_the_edge(
+    cx: &mut TestAppContext,
+) {
+    for scale in SCALES {
+        for down in [0.5, 5., 40.] {
+            let mut rows = Rows::new(cx, turns(40), scale);
+            let last = rows.heights.borrow().len() - 1;
+            rows.heights.borrow_mut()[last] += 24.;
+            rows.state.remeasure_items(last..last + 1);
+            rows.scroll(down, ScrollGesture::step());
+            rows.draw();
+            assert!(rows.choice.get(), "at {scale}, {down} down");
+            assert_eq!(rows.blank(), 0., "at {scale}, {down} down");
+            assert_eq!(rows.state.report().follow, Follow::Yes, "at {scale}");
+            rows.assert_whole();
+        }
+    }
+}
+
+#[gpui::test]
+fn a_place_past_the_end_stops_where_the_end_meets_the_bottom_edge(cx: &mut TestAppContext) {
+    for scale in SCALES {
+        let mut rows = Rows::new(cx, turns(40), scale);
+        let end = rows.tops();
+        let last = rows.heights.borrow().len() - 1;
+        rows.state.queue_move(ListMove::To(ListOffset {
+            item_ix: last,
+            offset_in_item: px(0.),
+        }));
+        rows.draw();
+        assert_eq!(rows.blank(), 0., "at {scale}");
+        assert_eq!(rows.tops(), end, "at {scale}");
+        // With blank below a shorter end, the place the view has stays.
+        rows.heights.borrow_mut()[last] -= 24.;
+        rows.state.remeasure_items(last..last + 1);
+        rows.draw();
+        let blank = rows.blank();
+        assert!(blank > 0., "at {scale}");
+        rows.state
+            .queue_move(ListMove::To(rows.state.logical_scroll_top()));
+        rows.draw();
+        assert_eq!(rows.blank(), blank, "at {scale}");
+    }
+}
+
+/// A view of 2,000 rows that counts the rows it renders.
+struct Counted {
+    state: ListState,
+    renders: Rc<Cell<usize>>,
+}
+
+impl Render for Counted {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl crate::IntoElement {
+        let renders = self.renders.clone();
+        list(self.state.clone(), move |_, _, _| {
+            renders.set(renders.get() + 1);
+            div().h(px(24.)).w_full().into_any_element()
+        })
+        .w_full()
+        .h_full()
+    }
+}
+
+#[gpui::test]
+fn a_long_list_measures_only_the_rows_near_the_view(cx: &mut TestAppContext) {
+    let window: AnyWindowHandle = cx.add_empty_window().window_handle();
+    let mut cx = VisualTestContext::from_window(window, cx);
+    let state = ListState::new(2000, ListAlignment::Top, px(100.)).with_queued_moves();
+    let renders = Rc::new(Cell::new(0));
+    let mut frame = |width: f32| {
+        let view = Counted {
+            state: state.clone(),
+            renders: renders.clone(),
+        };
+        let view = cx.update(|_, cx| cx.new(|_| view));
+        renders.set(0);
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(px(width), px(HEIGHT)),
+            |_, _| view.into_any_element(),
+        );
+        renders.get()
+    };
+    // 400 px of 24 px rows and 100 px past each edge are about 21 rows.
+    let most = 30;
+    state.queue_move(ListMove::ToStart);
+    for (step, width) in [400., 400., 401., 402.].into_iter().enumerate() {
+        let rendered = frame(width);
+        assert!(rendered <= most, "frame {step}: {rendered} rows rendered");
+    }
+    // The end, then another width, then the start. A jump measures the rows drawn in the last
+    // frame again, and those at its new place.
+    state.queue_move(ListMove::ToEnd);
+    assert!(frame(402.) <= 2 * most);
+    assert!(frame(403.) <= most);
+    state.queue_move(ListMove::ToStart);
+    assert!(frame(403.) <= 2 * most);
 }
 
 #[gpui::test]

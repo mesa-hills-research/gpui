@@ -98,8 +98,13 @@ impl ListMove {
     }
 }
 
+/// The most rows a move's distance adds up one by one. Beyond it the list's sum of measured
+/// and estimated heights counts them, so a jump measures no row on its way.
+const COUNTED_ONE_BY_ONE: usize = 256;
+
 /// What a scroll is part of.
 #[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ScrollGesture {
     /// The gesture starts with it (fingers came down).
     pub starts: bool,
@@ -152,9 +157,10 @@ pub struct MoveEffect {
 pub struct ListFrame<'a> {
     /// The frame's moves, in the order they came, with what each did.
     pub moves: &'a [MoveEffect],
-    /// Whether the end showed in the last frame.
+    /// Whether the end showed in the last frame, as it was drawn.
     pub end_showed: bool,
-    /// Whether the end shows after the moves.
+    /// Whether the end shows after the moves, by the heights measured in this frame, so with
+    /// the output that came since the last frame.
     pub end_shows: bool,
     /// Whether the list has another width than in the last frame, and its rows wrap again.
     pub width_changed: bool,
@@ -162,6 +168,7 @@ pub struct ListFrame<'a> {
 
 /// What a frame does with the end, as the app decides it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Follow {
     /// The lines stay where the moves put them, and what comes goes below them.
     #[default]
@@ -379,6 +386,20 @@ impl Rows<'_> {
         size
     }
 
+    /// Row `ix`'s height in device pixels as measured, in this layout or an earlier one, or as
+    /// estimated where it wasn't, without measuring it.
+    fn counted(&self, ix: usize) -> f64 {
+        if let Some(size) = self.sizes.get(&ix) {
+            return self.device(size.height);
+        }
+        let mut cursor = self.items.cursor::<Count>(());
+        cursor.seek(&Count(ix), Bias::Right);
+        cursor
+            .item()
+            .and_then(|item| item.size().or_else(|| item.size_hint()))
+            .map_or(0., |size| self.device(size.height))
+    }
+
     /// The height a row is counted at where it hasn't been measured, as the scrollbar counts it.
     fn estimate(&self, range: Range<usize>) -> f64 {
         let mut cursor = self.items.cursor::<super::ListItemSummary>(());
@@ -487,9 +508,8 @@ impl StateInner {
             let before = place;
             match what {
                 ListMove::Scroll { delta, gesture } => {
-                    if gesture.coasting && moves.coast_ended {
-                        // (The reader asked for a place since the coast began.)
-                    } else {
+                    // (A coast moves nothing once the view was placed since it began.)
+                    if !(gesture.coasting && moves.coast_ended) {
                         if !gesture.coasting {
                             moves.coast_ended = false;
                         }
@@ -508,10 +528,20 @@ impl StateInner {
                     }
                 }
                 ListMove::Thumb { to: Some(to) } | ListMove::To(to) => {
+                    let blank_before = end_below(&mut rows, place, room, 0., render, window, cx)
+                        .is_some_and(|below| below < 0.);
                     place = Place {
                         ix: to.item_ix.min(count),
                         offset: device(to.offset_in_item).max(0.),
                     };
+                    // (A place past the end, as rows estimated taller than they draw give,
+                    // stops where the end meets the bottom edge, unless the view was there.)
+                    if !blank_before
+                        && end_below(&mut rows, place, room, 0., render, window, cx)
+                            .is_some_and(|below| below < 0.)
+                    {
+                        place = end_place(&mut rows, room, render, window, cx);
+                    }
                 }
                 ListMove::Thumb { to: None } => {
                     if end_below(&mut rows, place, room, 0., render, window, cx)
@@ -569,7 +599,7 @@ impl StateInner {
                     }
                 }
             }
-            let moved = position(&mut rows, before, place, render, window, cx);
+            let moved = position(&rows, before, place);
             let end_shows = end_below(&mut rows, place, room, 0., render, window, cx)
                 .is_some_and(|below| below <= 0.);
             effects.push(MoveEffect {
@@ -601,7 +631,7 @@ impl StateInner {
                 if grew > 0. {
                     let give = grew.min(moves.give_back);
                     let given = back(&mut rows, place, give, render, window, cx);
-                    moves.give_back -= position(&mut rows, place, given, render, window, cx);
+                    moves.give_back -= position(&rows, place, given);
                     place = given;
                 }
                 let below = end_below(&mut rows, place, room, room, render, window, cx);
@@ -641,7 +671,8 @@ impl StateInner {
             window,
             cx,
         );
-        let below_end = end_below(&mut rows, place, room, f64::INFINITY, render, window, cx);
+        let overdraw = rows.device(self.overdraw);
+        let below_end = end_below(&mut rows, place, room, overdraw, render, window, cx);
         let end_shows = below_end.is_some_and(|below| below <= 0.);
         let below = match below_end {
             Some(below) => below,
@@ -836,14 +867,7 @@ fn back(
 }
 
 /// How far the lines moved from `from` to `to`, in device pixels, down when positive.
-fn position(
-    rows: &mut Rows,
-    from: Place,
-    to: Place,
-    render: &mut RenderItemFn,
-    window: &mut Window,
-    cx: &mut App,
-) -> f64 {
+fn position(rows: &Rows, from: Place, to: Place) -> f64 {
     if from == to {
         return 0.;
     }
@@ -853,8 +877,12 @@ fn position(
         (to, from, 1.)
     };
     let mut distance = last.offset - first.offset;
-    for ix in first.ix..last.ix {
-        distance += rows.height(ix, render, window, cx);
+    if last.ix - first.ix > COUNTED_ONE_BY_ONE {
+        distance += rows.estimate(first.ix..last.ix);
+    } else {
+        for ix in first.ix..last.ix {
+            distance += rows.counted(ix);
+        }
     }
     sign * distance
 }
