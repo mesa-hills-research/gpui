@@ -532,7 +532,7 @@ pub struct ScrollWheelEvent {
     /// The phase of the touch event.
     pub touch_phase: TouchPhase,
 
-    /// Whether the event is a coast: the motion that goes on after the fingers lifted, which
+    /// Whether the event is a coast, the motion that goes on after the fingers lifted. That
     /// is the system's inertia on macOS (its momentum phase) and on Windows (DirectManipulation's
     /// inertia), and GPUI's own fling after a finger's swipe. A view that places itself (a
     /// list told to go to its end, say) can drop the rest of a coast, which the reader no

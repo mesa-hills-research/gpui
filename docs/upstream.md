@@ -412,8 +412,8 @@ adds the same line.
 - **Lists laid out by queued moves**, in `mhr-gpui`'s `src/elements/list.rs` and
   `src/elements/list_moves.rs`, for a list whose app owns the reader's choice to follow its end,
   such as a chat transcript. `ListState::with_queued_moves` turns it on, and `queue_move` queues
-  each move for the next layout: a scroll, the thumb, the end, the start, a place, a row revealed,
-  a row kept on its place, and the blank below the end closed. The layout applies them in order
+  each move for the next layout, such as a scroll, the thumb, the end, the start, a place, a row
+  revealed, a row kept on its place, and the blank below the end closed. The layout applies them in order
   over the rows it measures there, so heights only estimated place the scrollbar's thumb and
   nothing on the screen. The first drawn row's origin stays on a whole device pixel, since moves
   are whole device pixels and a gesture's part below one waits for its next delta, until the

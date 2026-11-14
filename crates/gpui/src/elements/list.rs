@@ -100,7 +100,9 @@ impl List {
 
     /// Decides with `decide` what each frame of a list laid out by queued moves
     /// ([`ListState::with_queued_moves`]) does with its end, from what the frame's moves did.
-    /// Without it the lines stay where the moves put them.
+    /// Without it the lines stay where the moves put them. It runs in the list's layout with
+    /// the list's state borrowed, as the function that renders a row does, so it decides from
+    /// the frame and the app's own state, and a call on the list's `ListState` from it panics.
     pub fn follow_end(
         mut self,
         decide: impl FnMut(&ListFrame<'_>, &mut Window, &mut App) -> Follow + 'static,

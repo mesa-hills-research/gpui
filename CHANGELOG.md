@@ -16,8 +16,8 @@ the other crates stay at 0.1.0.
 ### Lists
 
 - `ListState::with_queued_moves` lays a list out by the moves queued for its next frame
-  (`ListState::queue_move`): the reader's scrolls, the scrollbar's thumb, the end, the start, a
-  place, a row revealed, a row kept on its place and the blank below the end closed. The layout
+  (`ListState::queue_move`), such as the reader's scrolls, the scrollbar's thumb, the end, the
+  start, a place, a row revealed, a row kept on its place and the blank below the end closed. The layout
   applies them in order over the rows it measures there, in whole device pixels, and reports what
   each did (`ListState::report`), from which the app decides what each frame does with the end
   (`List::follow_end`). The lines never move down by themselves. A shorter end leaves blank space
@@ -32,8 +32,8 @@ the other crates stay at 0.1.0.
 
 ### Input
 
-- `ScrollWheelEvent::coasting` says whether an event is the motion after the fingers lifted:
-  macOS's momentum phase, DirectManipulation's inertia on Windows and GPUI's own fling. A
+- `ScrollWheelEvent::coasting` says whether an event is the motion after the fingers lifted,
+  which is macOS's momentum phase, DirectManipulation's inertia on Windows and GPUI's own fling. A
   `ScrollWheelEvent` written out field by field needs the new field, which
   `..Default::default()` gives.
 
