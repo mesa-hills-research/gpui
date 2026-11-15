@@ -1,4 +1,9 @@
-# gpui
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mesa-hills-research/gpui/main/assets/readme-header-dark.svg">
+    <img src="https://raw.githubusercontent.com/mesa-hills-research/gpui/main/assets/readme-header-light.svg" alt="gpui" width="238">
+  </picture>
+</h1>
 
 This repository is Mesa Hills Research's fork of [GPUI](https://www.gpui.rs), the GPU-accelerated
 UI framework of the [Zed](https://github.com/zed-industries/zed) editor, together with a mobile
@@ -7,10 +12,15 @@ platform for iOS and Android. GPUI fixes and the mobile work live here, next to 
 builds on it. The crates are on crates.io as [`mhr-gpui`](https://crates.io/crates/mhr-gpui) and
 its siblings, and [CHANGELOG.md](CHANGELOG.md) lists what each release changes.
 
-It follows the `gpui-pre` crates that GPUI Kit publishes, which are snapshots of Zed's gpui cut by
-GPUI Kit's release tooling. Today that is **gpui-pre 0.3.8**, from Zed
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mesa-hills-research/gpui/main/docs/images/font-weights-dark.png">
+  <img src="https://raw.githubusercontent.com/mesa-hills-research/gpui/main/docs/images/font-weights-light.png" alt="Figtree at weights 300 to 900, drawn Light at every weight by upstream GPUI on Linux and at each weight by this fork." width="580">
+</picture>
+
+It started from **gpui-pre 0.3.8**, which GPUI Kit's release tooling cut from Zed's gpui at
 [`279fe070`](https://github.com/zed-industries/zed/commit/279fe070bb389b79652e52065b2f001edcc0b11b)
-(2026-10-04), the snapshot GPUI Kit 0.7.1 is built against.
+(2026-10-04) and which GPUI Kit 0.7.1 is built against. It's maintained on its own, without later
+snapshots.
 
 | Crates | Source | State |
 |---|---|---|
@@ -41,12 +51,6 @@ fn main() {
 An app on the `gpui-pre` crates moves over by swapping each one for its `mhr-` package under the
 same dependency name. [docs/using.md](docs/using.md) lists the packages and covers git and local
 checkouts.
-
-## Following upstream
-
-Each gpui-pre release lands on the `upstream` branch as one commit holding the crates as GPUI
-Kit's tooling stages them for crates.io. `main` merges `upstream` and carries the fork's names and
-changes on top. [docs/upstream.md](docs/upstream.md) has the steps.
 
 ## Mobile
 
