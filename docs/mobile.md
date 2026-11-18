@@ -19,18 +19,17 @@ Android was validated for one AI chat screen.
 
 ## Status
 
-On gpui-pre 0.3.8:
-
-- `cargo check -p mhr-gpui-mobile --all-targets --target <target>` passes for
+- `cargo check -p mhr-gpui-mobile --all-targets --target <target>` passed for
   `aarch64-linux-android`, `x86_64-linux-android`, `aarch64-apple-ios` and
-  `aarch64-apple-ios-sim`. The unit tests pass on Linux. Two doctests are snippets without imports
-  and fail to compile, as upstream's do.
+  `aarch64-apple-ios-sim`, on gpui-pre 0.3.8, the snapshot `mhr-gpui` started from. The unit tests
+  pass on Linux. Two doctests are snippets without imports and fail to compile, as upstream's do.
 - Up to commit `f98b12a`, the example app's `.so` built and linked with NDK r29 for both
-  Android targets. It builds again once GPUI Kit builds on the `mhr-` crates (see below).
+  Android targets. It can't build now, since it still takes GPUI Kit 0.7.1 (see below).
 - On Linux the example fails to type-check for iOS: `ring` and `aws-lc-sys` compile C with the iOS
   SDK, and `backtrace` hits the libc break below.
 
-Still to do: an APK, a run on a device or emulator, and anything on a Mac.
+Still to do: the target checks on `mhr-gpui` 0.2.0, an APK, a run on a device or emulator, and
+anything on a Mac.
 
 ## Android
 
@@ -55,11 +54,17 @@ cargo build --lib --target aarch64-linux-android \
 An APK takes `example/build.sh android`, which also needs cargo-ndk, the Android SDK and JDK 17.
 The crate's [README](../crates/gpui_mobile/README.md) has the details.
 
-The example is a workspace of its own, so it keeps its release profile. It uses GPUI Kit 0.7.1
-from crates.io, which builds on the `gpui-pre` crates. Up to commit `f98b12a`, a
-`[patch.crates-io]` in the example's manifest pointed those at this workspace. A patch can't
-rename a crate, so with the `mhr-` names the example needs a GPUI Kit built on them, and until
-then it builds from that commit.
+The example is a workspace of its own, so it keeps its release profile. It still takes GPUI Kit
+0.7.1 from crates.io (`gpui-kit`, upstream's), which builds on `gpui-pre` 0.3.8. Beside the crate's
+`mhr-gpui` 0.2.0 that makes two GPUIs with types that don't match. Up to commit `f98b12a`, a
+`[patch.crates-io]` in the example's manifest pointed the `gpui-pre` crates at this workspace, and
+a patch can't rename a crate.
+
+`mhr-gpui-kit` 0.8.1 builds on `mhr-gpui` 0.2.0, so the example waits for a move to it, and it
+hasn't been built against 0.8's API. With the dependency moved to
+`gpui-kit = { package = "mhr-gpui-kit", version = "=0.8.1", ... }` alone, `mhr-gpui` still resolves
+twice, from this workspace and from crates.io. A `[patch.crates-io]` that points every `mhr-` crate
+at this workspace, as [Using the fork](using.md#from-git-or-a-local-checkout) shows, leaves one.
 
 ## iOS
 

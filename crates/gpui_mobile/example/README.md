@@ -9,8 +9,9 @@ nested lists, code, tables, quotes, and links.
 Sending a message produces an explicitly labeled local demo response. No AI
 service is configured. UIKit moves the embedded view above the keyboard.
 
-The example pins GPUI Kit to a Git revision with mobile platform support.
-No sibling checkout or published mobile crate is required.
+The example takes GPUI Kit 0.7.1 from crates.io, which builds on `gpui-pre`, so it waits for a
+move to `mhr-gpui-kit` before it builds beside this workspace's GPUI
+([docs/mobile.md](../../../docs/mobile.md#android)).
 
 ```sh
 ./build.sh ios --simulator

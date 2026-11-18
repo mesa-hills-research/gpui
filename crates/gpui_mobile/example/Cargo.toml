@@ -19,9 +19,10 @@ name = "gpui-example"
 path = "src/main.rs"
 
 [dependencies]
-# GPUI Kit 0.7.1 is built against the gpui-pre crates, which this workspace's
-# mhr crates replace under new names. A [patch] can't rename a crate, so the
-# example builds again once GPUI Kit is built on the mhr crates.
+# GPUI Kit 0.7.1 is upstream's, built against the gpui-pre crates, which this
+# workspace's mhr crates replace under new names. A [patch] can't rename a
+# crate. mhr-gpui-kit 0.8.1 is built on the mhr crates, so the example waits for
+# a move to it (docs/mobile.md).
 gpui-kit = { version = "=0.7.1", default-features = false, features = ["component"] }
 gpui-mobile = { package = "mhr-gpui-mobile", path = ".." }
 gpui = { package = "mhr-gpui", path = "../../gpui", default-features = false }

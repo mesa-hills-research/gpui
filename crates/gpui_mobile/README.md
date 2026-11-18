@@ -15,25 +15,26 @@ Implements the `gpui::Platform` trait for mobile targets, following the same arc
 
 **Highlights:** GPU-accelerated rendering, touch input with momentum scrolling, keyboard support, safe area insets, dark mode, and emoji rendering.
 
-## GPUI pre-release dependencies
+## Depending on it
 
-This fork publishes as `gpui-pre-mobile` and uses the crates.io GPUI snapshots
-from GPUI Kit. Version `0.1.0` targets `gpui-pre` and `gpui-pre-wgpu` **0.3.4**.
-Both are pinned together so the platform, renderer, and application share the
-same GPUI types. No Zed Git checkout or consumer Cargo patches are needed.
+The package is `mhr-gpui-mobile`. Its library and its native library files are named
+`gpui_mobile`. It isn't published (`publish = false`), so an app takes it from git. It builds on this
+workspace's GPUI, `mhr-gpui` 0.2.0, so take `mhr-gpui` from the same repository and commit. The app
+and the platform then share one set of GPUI types.
 
 ```toml
 [dependencies]
-gpui = { package = "gpui-pre", version = "=0.3.4", default-features = false }
-gpui-mobile = { package = "gpui-pre-mobile", version = "0.1.0" }
+gpui = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>", package = "mhr-gpui", default-features = false }
+gpui-mobile = { git = "https://github.com/mesa-hills-research/gpui", rev = "<commit>", package = "mhr-gpui-mobile" }
 ```
 
-The Rust library name remains `gpui_mobile`, including its native library
-filenames. Existing `use gpui_mobile::...` imports continue to work. Native app
+An `mhr-gpui` from crates.io beside it, such as one that `mhr-gpui-kit` brings in, is a second GPUI
+with types that don't match. [Using the fork](../../docs/using.md#from-git-or-a-local-checkout)
+shows the `[patch.crates-io]` that points the published `mhr-` crates at one checkout. Native app
 entry points and build steps are demonstrated in `example/`.
 
-This is an experimental platform release. Switching to `gpui-pre` does not
-complete mobile IME composition, accessibility, or the mobile lifecycle hooks.
+This platform is experimental. Mobile IME composition, accessibility, and the mobile lifecycle
+hooks are not complete.
 
 Custom Android hosts should extend `dev.gpui.mobile.GpuiInputActivity` instead of
 `android.app.NativeActivity` to receive multistage IME composition through a
@@ -47,9 +48,9 @@ filesystem paths; it does not require broad storage permissions.
 
 ### Prerequisites
 
-- **Rust** 1.75+
-- **iOS**: macOS + Xcode 15+, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
-- **Android**: Android SDK + NDK r25+, [cargo-ndk](https://github.com/nickelc/cargo-ndk) (`cargo install cargo-ndk`)
+- **Rust** 1.95 or later
+- **iOS**: macOS + Xcode 16 or later, [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+- **Android**: Android SDK + NDK r27 or later, [cargo-ndk](https://github.com/nickelc/cargo-ndk) (`cargo install cargo-ndk`)
 
 ### Build & Run
 
